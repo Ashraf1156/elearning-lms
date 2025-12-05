@@ -24,6 +24,7 @@ export default function InstructorDashboard() {
             <Route path="assessments/new" element={<AssessmentEditor />} />
             <Route path="assessments/edit/:id" element={<AssessmentEditor />} />
             <Route path="assessments/results/:id" element={<AssessmentResults />} />
+            <Route path="*" element={<Navigate to="analytics" replace />} />
         </Routes>
     );
 }

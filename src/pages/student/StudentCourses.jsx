@@ -166,7 +166,7 @@ export default function StudentCourses() {
                         const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
                         return (
-                            <Link key={course.id} to={`course/${course.id}`}>
+                            <Link key={course.id} to={`/student/course/${course.id}`}>
                                 <Card className="h-full hover:shadow-md transition-shadow cursor-pointer group flex flex-col">
                                     <CardHeader className="p-0">
                                         <div className="aspect-video w-full overflow-hidden rounded-t-lg bg-muted relative">

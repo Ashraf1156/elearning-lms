@@ -48,6 +48,7 @@ function App() {
               For now, let's redirect to student dashboard as default or login.
           */}
           <Route path="/" element={<Navigate to="/student" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
     </Router>

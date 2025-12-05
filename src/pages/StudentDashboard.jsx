@@ -16,6 +16,7 @@ export default function StudentDashboard() {
                 <Route path="assessments" element={<StudentAssessments />} />
                 <Route path="assessments/:id" element={<AssessmentPlayer />} />
                 <Route path="course/:courseId" element={<CoursePlayer />} />
+                <Route path="*" element={<Navigate to="courses" replace />} />
             </Routes>
         </ContentProtection>
     );

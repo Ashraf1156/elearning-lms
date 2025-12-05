@@ -9,6 +9,7 @@ export default function AdminDashboard() {
             <Route path="analytics" element={<AdminAnalytics />} />
             <Route path="users" element={<AdminUsers />} />
             <Route path="settings" element={<div>Settings (Coming Soon)</div>} />
+            <Route path="*" element={<Navigate to="analytics" replace />} />
         </Routes>
     );
 }

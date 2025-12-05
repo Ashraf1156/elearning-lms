@@ -308,7 +308,7 @@ function QuizPlayer({ module }) {
                 <p className="text-muted-foreground mb-8">
                     This quiz contains {questions.length} questions.
                 </p>
-                <Button onClick={handleStart} size="lg">Start Quiz</Button>
+                <Button onClick={handleStart} size="lg" disabled={questions.length === 0}>Start Quiz</Button>
             </div>
         );
     }
