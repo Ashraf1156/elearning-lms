@@ -67,8 +67,8 @@ export default function Login() {
 
         try {
             const actionCodeSettings = {
-                url: 'http://localhost:5173/reset-password',
-                handleCodeInApp: true,
+                url: `${window.location.origin}/login`,
+                handleCodeInApp: false,
             };
             await sendPasswordResetEmail(auth, resetEmail, actionCodeSettings);
             setResetMessage("Password reset email sent! Please check your inbox.");
