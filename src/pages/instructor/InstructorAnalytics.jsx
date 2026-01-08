@@ -23,13 +23,37 @@ export default function InstructorAnalytics() {
 
     const fetchAnalytics = async () => {
         try {
-            // 1. Fetch my courses
-            const qCourses = query(collection(db, "courses"), where("instructorId", "==", user.uid));
-            const coursesSnap = await getDocs(qCourses);
-            const myCourses = coursesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            const myCourseIds = myCourses.map(c => c.id);
+            // 1. Fetch my courses (owned + co-instructed)
+            let ownedCourses = [];
+            let coCourses = [];
+
+            try {
+                const ownedQ = query(collection(db, "courses"), where("instructorId", "==", user.uid));
+                const ownedSnap = await getDocs(ownedQ);
+                ownedCourses = ownedSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            } catch (err) {
+                console.error("Error fetching owned courses:", err);
+            }
+
+            try {
+                const coInstructedQ = query(collection(db, "courses"), where("coInstructorIds", "array-contains", user.uid));
+                const coSnap = await getDocs(coInstructedQ);
+                coCourses = coSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            } catch (err) {
+                console.warn("Error fetching co-instructed courses (likely missing index or permission):", err);
+            }
+
+            // Merge and deduplicate
+            const allCourses = [...ownedCourses, ...coCourses];
+            const uniqueCourses = Array.from(new Map(allCourses.map(c => [c.id, c])).values());
+            const myCourseIds = uniqueCourses.map(c => c.id);
+
+            console.log("Instructor Analytics - UID:", user.uid);
+            console.log("Owned Courses Found:", ownedCourses.length);
+            console.log("Total Unique Courses:", myCourseIds.length);
 
             if (myCourseIds.length === 0) {
+                console.log("No courses found for this instructor.");
                 setStats({ totalCourses: 0, totalStudents: 0, totalEnrollments: 0, avgCompletion: 0 });
                 setLoading(false);
                 return;
@@ -38,6 +62,7 @@ export default function InstructorAnalytics() {
             // 2. Fetch students enrolled in my courses
             const qStudents = query(collection(db, "users"), where("role", "==", "student"));
             const studentsSnap = await getDocs(qStudents);
+            console.log("Total students in database:", studentsSnap.size);
 
             let uniqueStudents = new Set();
             let totalEnrollments = 0;
@@ -48,9 +73,9 @@ export default function InstructorAnalytics() {
             // We need to fetch progress for each enrollment to calculate average
             const progressPromises = [];
 
-            studentsSnap.docs.forEach(doc => {
-                const studentData = doc.data();
-                const studentId = doc.id;
+            studentsSnap.docs.forEach(studentDoc => {
+                const studentData = studentDoc.data();
+                const studentId = studentDoc.id;
                 const enrolledInMyCourses = studentData.enrolledCourses?.filter(id => myCourseIds.includes(id)) || [];
 
                 if (enrolledInMyCourses.length > 0) {
@@ -59,7 +84,7 @@ export default function InstructorAnalytics() {
 
                     // For each enrollment, fetch progress
                     enrolledInMyCourses.forEach(courseId => {
-                        const course = myCourses.find(c => c.id === courseId);
+                        const course = uniqueCourses.find(c => c.id === courseId);
                         if (course) {
                             progressPromises.push(
                                 getDoc(doc(db, "users", studentId, "courseProgress", courseId))
@@ -84,12 +109,15 @@ export default function InstructorAnalytics() {
             const sumPercentages = percentages.reduce((acc, curr) => acc + curr, 0);
             const avgCompletion = percentages.length > 0 ? Math.round(sumPercentages / percentages.length) : 0;
 
-            setStats({
-                totalCourses: myCourses.length,
+            const finalStats = {
+                totalCourses: uniqueCourses.length,
                 totalStudents: uniqueStudents.size,
                 totalEnrollments: totalEnrollments,
                 avgCompletion: avgCompletion
-            });
+            };
+
+            console.log("Setting stats:", finalStats);
+            setStats(finalStats);
 
         } catch (error) {
             console.error("Error fetching analytics:", error);

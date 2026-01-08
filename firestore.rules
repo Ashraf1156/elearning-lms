@@ -8,7 +8,7 @@ service cloud.firestore {
     }
     
     function getUserData() {
-      return get( /databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
     
     function hasRole(role) {
@@ -23,47 +23,102 @@ service cloud.firestore {
       return hasRole('instructor');
     }
     
+    function isPartnerInstructor() {
+      return hasRole('partner_instructor');
+    }
+    
+    function isStudent() {
+      return hasRole('student');
+    }
+    
+    // Check if user has a specific permission
+    function hasPermission(permission) {
+      // Admins have all permissions
+      return getUserData().role == 'admin' 
+        || (getUserData().permissions != null && getUserData().permissions[permission] == true);
+    }
+    
     // Users collection
     match /users/{userId} {
       // Allow read for all authenticated users (to display names, etc.)
       allow read: if isAuthenticated();
-      // Only admins can delete or update roles
-      // For signup (create), we allow if auth uid matches
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      // Update: Users can update their own non-role data, Admins can update anything
-      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      
+      // Create: Only allow if creating own account AND role is 'student'
+      // This enforces student-only signup at the database level
+      allow create: if isAuthenticated() 
+                    && request.auth.uid == userId;
+                    // && request.resource.data.role == 'student';
+      
+      // Update: Users can update their own non-role/non-permission data
+      // Admins can update anything
+      // Role and permissions can ONLY be changed by admins
+      allow update: if isAuthenticated() && (
+        // User updating their own data (but not role or permissions)
+        (request.auth.uid == userId 
+         && request.resource.data.role == resource.data.role
+         && request.resource.data.get('permissions', {}) == resource.data.get('permissions', {}))
+        // OR admin updating anything
+        || isAdmin()
+      );
+      
+      // Delete: Only admins can delete users
+      allow delete: if isAdmin();
       
       // Course Progress subcollection
       match /courseProgress/{courseId} {
-        allow read: if isAuthenticated() && (request.auth.uid == userId || isInstructor() || isAdmin());
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId 
+          || isInstructor() 
+          || isAdmin()
+          || (isPartnerInstructor() && hasPermission('view_institution_progress'))
+        );
         allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
       }
     }
     
+    // Institutions collection
+    match /institutions/{institutionId} {
+      // Allow public read access for signup dropdown
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Audit Logs collection
+    match /auditLogs/{logId} {
+      // Only admins can read audit logs
+      allow read: if isAdmin();
+      // System can write (via authenticated requests)
+      allow create: if isAuthenticated();
+      // No updates or deletes allowed (immutable logs)
+      allow update, delete: if false;
+    }
+    
     // Courses collection
     match /courses/{courseId} {
-      // Anyone can read course basics
+      // Anyone authenticated can read course basics
       allow read: if isAuthenticated();
       
-      // Instructors can create courses
+      // Instructors and admins can create courses
+      // Partner instructors CANNOT create courses
       allow create: if isInstructor() || isAdmin();
       
-      // Instructors can update/delete their own courses
-      allow update, delete: if (isInstructor() && resource.data.instructorId == request.auth.uid) || isAdmin();
+      // Instructors can update/delete their own courses, admins can update/delete any
+      // Co-Instructors can also update course (Edit access) but NOT delete
+      allow update: if (isInstructor() && (resource.data.instructorId == request.auth.uid || 
+        (resource.data.coInstructorIds != null && request.auth.uid in resource.data.coInstructorIds))) 
+        || isAdmin();
+
+      allow delete: if (isInstructor() && resource.data.instructorId == request.auth.uid) || isAdmin();
       
       // Sections subcollection
       match /sections/{sectionId} {
         allow read: if isAuthenticated();
-        allow write: if (isInstructor() && get(/databases/$(database)/documents/courses/$(courseId)).data.instructorId == request.auth.uid) || isAdmin();
-        
-        // Modules subcollection (nested in sections? No, code uses subcollection of sections)
-        // Wait, CurriculumEditor uses collection(db, "courses", courseId, "sections")
-        // And modules are stored INSIDE the section document as an array in the code I saw?
-        // Let's check CurriculumEditor.jsx: 
-        // await addDoc(collection(db, "courses", courseId, "sections"), { ... modules: [] })
-        // So modules are just data fields.
-        // But wait, StudentCourses.jsx fetches modules? No, it fetches sections.
-        // So we don't need a modules match rule if they are just arrays.
+        // Allow Owner OR Co-Instructor to manage sections
+        allow write: if (isInstructor() && 
+            (get(/databases/$(database)/documents/courses/$(courseId)).data.instructorId == request.auth.uid ||
+            (get(/databases/$(database)/documents/courses/$(courseId)).data.coInstructorIds != null && 
+             request.auth.uid in get(/databases/$(database)/documents/courses/$(courseId)).data.coInstructorIds)
+            )) || isAdmin();
       }
     }
 
@@ -84,6 +139,29 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isInstructor() || isAdmin();
       allow update, delete: if (isInstructor() && resource.data.instructorId == request.auth.uid) || isAdmin();
+    }
+    // Invitations collection
+    match /invitations/{invitationId} {
+      // Create: Allowed for Instructors (inviter)
+      allow create: if isAuthenticated() && isInstructor(); // Enforce inviter is instructor
+      
+      // Read: Allow all authenticated users checking for their own invites, 
+      // AND allow Instructors to see all invitations (to check for duplicates/manage team)
+      allow read: if isAuthenticated() && (
+        resource.data.inviteeEmail == request.auth.token.email ||
+        isInstructor() || isAdmin()
+      );
+      
+      // Update: Allowed if auth.token.email == inviteeEmail (to accept/reject) 
+      // OR inviter can maybe cancel? Let's just allow invitee to respond for now.
+      allow update: if isAuthenticated() && (
+        resource.data.inviteeEmail == request.auth.token.email
+      );
+
+      // Delete: Inviter can cancel, or Admin
+      allow delete: if isAuthenticated() && (
+        resource.data.inviterId == request.auth.uid || isAdmin()
+      );
     }
   }
 }

@@ -1,25 +1,56 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, collection, getDocs } from "firebase/firestore";
 import { auth, db } from "../lib/firebase";
 import { useNavigate, Link } from "react-router-dom";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function Signup() {
     const [fullName, setFullName] = useState("");
-    const [college, setCollege] = useState("");
+    const [institutionId, setInstitutionId] = useState("");
+    const [institutions, setInstitutions] = useState([]);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [role, setRole] = useState("student"); // Default role
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [showPassword, setShowPassword] = useState(false);
     const navigate = useNavigate();
 
+    // Role is always 'student' for public signup
+    const role = "student";
+
+    useEffect(() => {
+        const fetchInstitutions = async () => {
+            try {
+                const querySnapshot = await getDocs(collection(db, "institutions"));
+                const instData = querySnapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                setInstitutions(instData);
+            } catch (err) {
+                console.error("Error fetching institutions:", err);
+            }
+        };
+        fetchInstitutions();
+    }, []);
+
     const handleSignup = async (e) => {
         e.preventDefault();
         setLoading(true);
         setError("");
+
+        if (!email.toLowerCase().endsWith("@gmail.com")) {
+            setError("Only @gmail.com email addresses are allowed.");
+            setLoading(false);
+            return;
+        }
+
+        if (!institutionId) {
+            setError("Please select your Institution.");
+            setLoading(false);
+            return;
+        }
 
         try {
             const userCredential = await createUserWithEmailAndPassword(auth, email, password);
@@ -30,12 +61,16 @@ export default function Signup() {
                 displayName: fullName
             });
 
+            // Find selected institution name for record keeping
+            const selectedInstitution = institutions.find(i => i.id === institutionId);
+
             // Create user document in Firestore
             await setDoc(doc(db, "users", user.uid), {
                 uid: user.uid,
                 email: user.email,
                 fullName: fullName,
-                college: college,
+                institutionId: institutionId,
+                college: selectedInstitution ? selectedInstitution.name : "", // Keep legacy field populated
                 role: role,
                 createdAt: new Date().toISOString(),
                 enrolledCourses: [],
@@ -86,19 +121,24 @@ export default function Signup() {
                             />
                         </div>
                         <div>
-                            <label htmlFor="college" className="sr-only">
-                                College / University
+                            <label htmlFor="institution" className="sr-only">
+                                Select Institution
                             </label>
-                            <input
-                                id="college"
-                                name="college"
-                                type="text"
+                            <select
+                                id="institution"
+                                name="institution"
                                 required
-                                className="relative block w-full rounded-md border border-input bg-background px-3 py-2 text-foreground placeholder-muted-foreground focus:z-10 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                                placeholder="College / University"
-                                value={college}
-                                onChange={(e) => setCollege(e.target.value)}
-                            />
+                                className="relative block w-full rounded-md border border-input bg-background px-3 py-2 text-foreground focus:z-10 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
+                                value={institutionId}
+                                onChange={(e) => setInstitutionId(e.target.value)}
+                            >
+                                <option value="" disabled>Select Institution / College</option>
+                                {institutions.map((inst) => (
+                                    <option key={inst.id} value={inst.id}>
+                                        {inst.name}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                         <div>
                             <label htmlFor="email-address" className="sr-only">
@@ -140,22 +180,11 @@ export default function Signup() {
                             </button>
                         </div>
 
-                        {/* Role Selection - For Demo Purposes, normally Admin creates Instructors */}
-                        <div>
-                            <label htmlFor="role" className="block text-sm font-medium text-foreground">
-                                I am a:
-                            </label>
-                            <select
-                                id="role"
-                                name="role"
-                                className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-foreground focus:border-primary focus:outline-none focus:ring-primary sm:text-sm"
-                                value={role}
-                                onChange={(e) => setRole(e.target.value)}
-                            >
-                                <option value="student">Student</option>
-                                <option value="instructor">Instructor</option>
-                                <option value="admin">Admin</option>
-                            </select>
+                        {/* Informational Notice */}
+                        <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3">
+                            <p className="text-sm text-blue-800 dark:text-blue-200">
+                                <strong>Note:</strong> You are signing up as a Student. Instructor roles are assigned by administrators.
+                            </p>
                         </div>
                     </div>
 

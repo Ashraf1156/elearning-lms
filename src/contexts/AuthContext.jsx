@@ -4,6 +4,8 @@ import { auth, db } from "../lib/firebase";
 import { doc, getDoc, onSnapshot } from "firebase/firestore";
 import { Loader2 } from "lucide-react";
 import { isFirebaseInitialized } from "../lib/firebase";
+import { hasPermission as checkPermission, canAccessRoute } from "../lib/rbac";
+
 
 
 const AuthContext = createContext({});
@@ -50,11 +52,30 @@ export const AuthProvider = ({ children }) => {
 
     const signOut = () => firebaseSignOut(auth);
 
+    // Role and permission helpers
+    const hasRole = (role) => {
+        if (!userData || !userData.role) return false;
+        return userData.role === role;
+    };
+
+    const hasPermission = (permission) => {
+        if (!userData || !userData.role) return false;
+        return checkPermission(userData, permission);
+    };
+
+    const canAccess = (route) => {
+        if (!userData || !userData.role) return false;
+        return canAccessRoute(userData, route);
+    };
+
     const value = {
         user,
         userData,
         loading,
         signOut,
+        hasRole,
+        hasPermission,
+        canAccess,
     };
 
     if (!isFirebaseInitialized) {

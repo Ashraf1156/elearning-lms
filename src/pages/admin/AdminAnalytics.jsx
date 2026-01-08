@@ -32,7 +32,7 @@ export default function AdminAnalytics() {
                     if (data.enrolledCourses) {
                         enrollments += data.enrolledCourses.length;
                     }
-                } else if (data.role === "instructor") {
+                } else if (data.role === "instructor" || data.role === "partner_instructor") {
                     instructors++;
                 }
             });

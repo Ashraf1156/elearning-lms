@@ -9,11 +9,16 @@ import { Loader2 } from "lucide-react";
 // Lazy load pages for performance (Code Splitting)
 const Login = React.lazy(() => import("./pages/Login"));
 const Signup = React.lazy(() => import("./pages/Signup"));
+const FixAdminRole = React.lazy(() => import("./pages/FixAdminRole"));
 const AdminDashboard = React.lazy(() => import("./pages/AdminDashboard"));
 const InstructorDashboard = React.lazy(() => import("./pages/InstructorDashboard"));
+const PartnerInstructorDashboard = React.lazy(() => import("./pages/partnerinstructor/PartnerInstructorDashboard"));
 const StudentDashboard = React.lazy(() => import("./pages/StudentDashboard"));
 const Terms = React.lazy(() => import("./pages/legal/Terms"));
 const Privacy = React.lazy(() => import("./pages/legal/Privacy"));
+const ResetPassword = React.lazy(() => import("./pages/ResetPassword"));
+const Profile = React.lazy(() => import("./pages/Profile"));
+const TestSetup = React.lazy(() => import("./pages/TestSetup"));
 
 // Loading fallback component
 const PageLoader = () => (
@@ -31,12 +36,22 @@ function App() {
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+
 
               {/* Legal Pages (Public) */}
               <Route path="/terms" element={<Layout><Terms /></Layout>} />
               <Route path="/privacy" element={<Layout><Privacy /></Layout>} />
 
               <Route element={<Layout />}>
+                <Route
+                  path="/profile"
+                  element={
+                    <ProtectedRoute>
+                      <Profile />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="/admin/*"
                   element={
@@ -54,6 +69,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/partner-instructor/*"
+                  element={
+                    <ProtectedRoute allowedRoles={['partner_instructor']}>
+                      <PartnerInstructorDashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
                   path="/student/*"
                   element={
                     <ProtectedRoute allowedRoles={['student']}>
@@ -61,6 +84,8 @@ function App() {
                     </ProtectedRoute>
                   }
                 />
+                <Route path="/profile" element={<ProtectedRoute allowedRoles={['admin', 'instructor', 'partner_instructor', 'student']}><Profile /></ProtectedRoute>} />
+                <Route path="/test-setup" element={<TestSetup />} />
               </Route>
 
               {/* Default redirect based on role is handled in ProtectedRoute, 

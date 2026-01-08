@@ -11,7 +11,8 @@ import {
     ChevronRight,
     TrendingUp,
     Megaphone,
-    FileText
+    FileText,
+    Building2
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -29,7 +30,10 @@ export function Sidebar({ collapsed, setCollapsed }) {
             items: [
                 { href: "/admin/analytics", label: "Dashboard", icon: LayoutDashboard },
                 { href: "/admin/users", label: "Users", icon: Users },
+                { href: "/admin/institutions", label: "Institutions", icon: Building2 },
+                { href: "/admin/audit-logs", label: "Audit Logs", icon: FileText },
                 { href: "/admin/settings", label: "Settings", icon: Settings },
+                { href: "/profile", label: "Profile", icon: Users },
             ],
         },
         {
@@ -40,6 +44,16 @@ export function Sidebar({ collapsed, setCollapsed }) {
                 { href: "/instructor/assessments", label: "Assessments", icon: FileText },
                 { href: "/instructor/announcements", label: "Announcements", icon: Megaphone },
                 { href: "/instructor/students", label: "Students", icon: Users },
+                { href: "/profile", label: "Profile", icon: Users },
+            ],
+        },
+        {
+            role: "partner_instructor",
+            items: [
+                { href: "/partner-instructor", label: "Dashboard", icon: LayoutDashboard },
+                { href: "/partner-instructor/courses", label: "My Courses", icon: BookOpen },
+                { href: "/partner-instructor/students", label: "Students", icon: Users },
+                { href: "/profile", label: "Profile", icon: Users },
             ],
         },
         {
@@ -48,6 +62,7 @@ export function Sidebar({ collapsed, setCollapsed }) {
                 { href: "/student", label: "My Learning", icon: GraduationCap },
                 { href: "/student/assessments", label: "Assessments", icon: FileText },
                 { href: "/student/announcements", label: "Announcements", icon: Megaphone },
+                { href: "/profile", label: "Profile", icon: Users },
             ],
         },
     ];
@@ -107,7 +122,9 @@ export function Sidebar({ collapsed, setCollapsed }) {
                     <div className="px-2 py-2">
                         <div className="flex flex-col mb-2">
                             <span className="text-sm font-medium truncate">{userData?.email}</span>
-                            <span className="text-xs text-muted-foreground capitalize">{role}</span>
+                            <span className="text-xs text-muted-foreground capitalize">
+                                {role === 'partner_instructor' ? 'Partner Instructor' : role}
+                            </span>
                         </div>
                         <button
                             onClick={signOut}
