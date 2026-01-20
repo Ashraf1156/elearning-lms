@@ -25,7 +25,6 @@ export default function CourseEditor() {
         description: "",
         thumbnailUrl: "",
         accessCode: generateAccessCode(),
-        instructorId: user?.uid,
         createdAt: new Date().toISOString(),
         coInstructorIds: [],
         deviceRestrictions: true,
