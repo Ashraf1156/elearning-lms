@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../../../lib/firebase";
 import { doc, getDoc, setDoc, addDoc, collection, updateDoc } from "firebase/firestore";
@@ -17,7 +17,10 @@ import {
     Download,
     CheckSquare,
     Square,
-    Type
+    Type,
+    Image,
+    Upload,
+    X
 } from "lucide-react";
 import jsPDF from "jspdf";
 import {
@@ -28,12 +31,14 @@ import {
     SelectValue
 } from "../../../components/ui/select";
 import { Checkbox } from "../../../components/ui/checkbox";
+import { uploadToCloudinary } from "../../../utils/cloudinary";
 
 // Question type constants
 const QUESTION_TYPES = {
     SINGLE_CHOICE: "single",
     MULTIPLE_CHOICE: "multiple",
-    PARAGRAPH: "paragraph"
+    PARAGRAPH: "paragraph",
+    IMAGE_TEXT: "image_text" // New question type
 };
 
 export default function AssessmentEditor() {
@@ -41,14 +46,16 @@ export default function AssessmentEditor() {
     const { user } = useAuth();
     const navigate = useNavigate();
     const isNew = !id;
+    const fileInputRef = useRef(null);
 
     const [loading, setLoading] = useState(false);
+    const [uploadingImages, setUploadingImages] = useState({}); // Track image uploads per question
     const [assessment, setAssessment] = useState({
         title: "",
         description: "",
         accessCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
         instructorId: user?.uid,
-        questions: [], // { id, text, type, options: [], correctAnswers: [], correctAnswer (for single) }
+        questions: [], // { id, text, type, options: [], correctAnswers: [], correctAnswer (for single), imageUrl }
         createdAt: new Date().toISOString(),
     });
 
@@ -68,7 +75,8 @@ export default function AssessmentEditor() {
                 const questions = data.questions?.map(q => ({
                     ...q,
                     type: q.type || QUESTION_TYPES.SINGLE_CHOICE,
-                    correctAnswers: q.correctAnswers || (q.correctAnswer !== undefined ? [q.correctAnswer] : [])
+                    correctAnswers: q.correctAnswers || (q.correctAnswer !== undefined ? [q.correctAnswer] : []),
+                    imageUrl: q.imageUrl || null
                 })) || [];
 
                 setAssessment({
@@ -91,30 +99,46 @@ export default function AssessmentEditor() {
         setLoading(true);
 
         try {
-            // Prepare data for Firestore
+            const isUploading = Object.values(uploadingImages).some(status => status);
+            if (isUploading) {
+                alert("Please wait for all images to finish uploading");
+                setLoading(false);
+                return;
+            }
+
+            // 1. Clean up the data object
+            // 2. Ensure both owner fields are set for rule compatibility
             const data = {
                 ...assessment,
-                instructorId: user.uid,
+                instructorId: user.uid, // For instructor rules
+                createdBy: user.uid,    // For guest/announcement rules
+                institutionId: user.institutionId || null,
+                updatedAt: new Date().toISOString(), // Good practice
                 questions: assessment.questions.map(q => ({
                     id: q.id,
                     text: q.text,
                     type: q.type,
+                    imageUrl: q.imageUrl || null,
                     options: q.options || [],
                     correctAnswer: q.type === QUESTION_TYPES.SINGLE_CHOICE ? q.correctAnswer : null,
                     correctAnswers: q.type === QUESTION_TYPES.MULTIPLE_CHOICE ? q.correctAnswers : [],
-                    // For paragraph type, no correct answers needed
                 }))
             };
 
             if (isNew) {
+                // Add createdAt only on new docs
+                data.createdAt = new Date().toISOString();
                 await addDoc(collection(db, "assessments"), data);
             } else {
+                // Use updateDoc to modify existing
                 await updateDoc(doc(db, "assessments", id), data);
             }
+
             navigate("/instructor/assessments");
         } catch (error) {
             console.error("Error saving assessment:", error);
-            alert("Failed to save assessment");
+            // This will now give you more detail if it's still failing
+            alert(`Failed to save: ${error.message}`);
         } finally {
             setLoading(false);
         }
@@ -133,6 +157,20 @@ export default function AssessmentEditor() {
             setAssessment(prev => ({
                 ...prev,
                 questions: [...prev.questions, newQuestion]
+            }));
+        } else if (type === QUESTION_TYPES.IMAGE_TEXT) {
+            // Image+text questions can have optional options
+            setAssessment(prev => ({
+                ...prev,
+                questions: [
+                    ...prev.questions,
+                    {
+                        ...newQuestion,
+                        options: ["", "", "", ""],
+                        correctAnswer: 0, // Default to first option
+                        imageUrl: null
+                    }
+                ]
             }));
         } else {
             // For single and multiple choice, add options
@@ -177,7 +215,7 @@ export default function AssessmentEditor() {
         question.options.splice(oIndex, 1);
 
         // Update correct answers if needed
-        if (question.type === QUESTION_TYPES.SINGLE_CHOICE) {
+        if (question.type === QUESTION_TYPES.SINGLE_CHOICE || question.type === QUESTION_TYPES.IMAGE_TEXT) {
             if (question.correctAnswer === oIndex) {
                 question.correctAnswer = 0; // Reset to first option
             } else if (question.correctAnswer > oIndex) {
@@ -195,7 +233,7 @@ export default function AssessmentEditor() {
     const handleCorrectAnswerChange = (qIndex, answerIndex) => {
         const question = assessment.questions[qIndex];
 
-        if (question.type === QUESTION_TYPES.SINGLE_CHOICE) {
+        if (question.type === QUESTION_TYPES.SINGLE_CHOICE || question.type === QUESTION_TYPES.IMAGE_TEXT) {
             updateQuestion(qIndex, "correctAnswer", answerIndex);
         } else if (question.type === QUESTION_TYPES.MULTIPLE_CHOICE) {
             const newCorrectAnswers = [...(question.correctAnswers || [])];
@@ -226,11 +264,22 @@ export default function AssessmentEditor() {
         question.type = newType;
 
         if (newType === QUESTION_TYPES.PARAGRAPH) {
-            // Remove options for paragraph type
+            // Remove options and image for paragraph type
             delete question.options;
             delete question.correctAnswer;
             delete question.correctAnswers;
+            delete question.imageUrl;
+        } else if (newType === QUESTION_TYPES.IMAGE_TEXT) {
+            // Keep image URL, add options if not present
+            if (!question.options) {
+                question.options = ["", "", "", ""];
+            }
+            question.correctAnswer = question.correctAnswer !== undefined ? question.correctAnswer : 0;
+            delete question.correctAnswers;
         } else {
+            // Remove image for non-image question types
+            delete question.imageUrl;
+
             // Add default options if not present
             if (!question.options) {
                 question.options = ["", "", "", ""];
@@ -248,6 +297,27 @@ export default function AssessmentEditor() {
         setAssessment({ ...assessment, questions: newQuestions });
     };
 
+    const handleImageUpload = async (qIndex, file) => {
+        if (!file) return;
+
+        // Set uploading state for this question
+        setUploadingImages(prev => ({ ...prev, [qIndex]: true }));
+
+        try {
+            const imageUrl = await uploadToCloudinary(file);
+            updateQuestion(qIndex, "imageUrl", imageUrl);
+        } catch (error) {
+            console.error("Error uploading image:", error);
+            alert("Failed to upload image");
+        } finally {
+            setUploadingImages(prev => ({ ...prev, [qIndex]: false }));
+        }
+    };
+
+    const removeImage = (qIndex) => {
+        updateQuestion(qIndex, "imageUrl", null);
+    };
+
     const exportPDF = () => {
         const doc = new jsPDF();
         doc.setFontSize(18);
@@ -263,6 +333,14 @@ export default function AssessmentEditor() {
             doc.text(`Q${i + 1}: ${q.text}`, 10, y);
             y += 7;
 
+            // Add image note if present
+            if (q.imageUrl) {
+                doc.setFont(undefined, 'italic');
+                doc.text("[Image included in online version]", 15, y);
+                y += 6;
+                doc.setFont(undefined, 'normal');
+            }
+
             doc.setFont(undefined, 'normal');
 
             if (q.type === QUESTION_TYPES.PARAGRAPH) {
@@ -271,7 +349,7 @@ export default function AssessmentEditor() {
             } else {
                 q.options.forEach((opt, j) => {
                     let prefix = "";
-                    if (q.type === QUESTION_TYPES.SINGLE_CHOICE && j === parseInt(q.correctAnswer)) {
+                    if ((q.type === QUESTION_TYPES.SINGLE_CHOICE || q.type === QUESTION_TYPES.IMAGE_TEXT) && j === parseInt(q.correctAnswer)) {
                         prefix = "(Correct) ";
                     } else if (q.type === QUESTION_TYPES.MULTIPLE_CHOICE && q.correctAnswers?.includes(j)) {
                         prefix = "(Correct) ";
@@ -346,7 +424,7 @@ export default function AssessmentEditor() {
                     </div>
 
                     {/* Question Type Selector */}
-                    <div className="flex gap-2 mb-4">
+                    <div className="flex gap-2 mb-4 flex-wrap">
                         <Button
                             type="button"
                             variant="outline"
@@ -374,6 +452,15 @@ export default function AssessmentEditor() {
                             <Type className="h-4 w-4" />
                             Paragraph
                         </Button>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => addQuestion(QUESTION_TYPES.IMAGE_TEXT)}
+                            className="flex items-center gap-2"
+                        >
+                            <Image className="h-4 w-4" />
+                            Image + Text
+                        </Button>
                     </div>
 
                     {assessment.questions.map((q, qIndex) => (
@@ -386,7 +473,7 @@ export default function AssessmentEditor() {
                                             value={q.type}
                                             onValueChange={(value) => changeQuestionType(qIndex, value)}
                                         >
-                                            <SelectTrigger className="w-[140px]">
+                                            <SelectTrigger className="w-[160px]">
                                                 <SelectValue placeholder="Type" />
                                             </SelectTrigger>
                                             <SelectContent>
@@ -408,11 +495,18 @@ export default function AssessmentEditor() {
                                                         Paragraph
                                                     </div>
                                                 </SelectItem>
+                                                <SelectItem value={QUESTION_TYPES.IMAGE_TEXT}>
+                                                    <div className="flex items-center gap-2">
+                                                        <Image className="h-3 w-3" />
+                                                        Image + Text
+                                                    </div>
+                                                </SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>
 
                                     <div className="flex-1 space-y-4">
+                                        {/* Question Text Input */}
                                         <Input
                                             placeholder="Question text"
                                             value={q.text}
@@ -420,32 +514,86 @@ export default function AssessmentEditor() {
                                             required
                                         />
 
-                                        {q.type === QUESTION_TYPES.PARAGRAPH ? (
+                                        {/* Image Upload for IMAGE_TEXT type */}
+                                        {q.type === QUESTION_TYPES.IMAGE_TEXT && (
                                             <div className="space-y-2">
-                                                <Label>Answer Format</Label>
-                                                <div className="p-4 border rounded-md bg-gray-50">
-                                                    <p className="text-gray-600">Paragraph answer field will be shown to students</p>
-                                                </div>
+                                                <Label>Question Image (Optional)</Label>
+                                                {q.imageUrl ? (
+                                                    <div className="relative border rounded-md p-2">
+                                                        <img
+                                                            src={q.imageUrl}
+                                                            alt="Question"
+                                                            className="max-h-48 mx-auto rounded"
+                                                        />
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="absolute top-2 right-2 h-6 w-6 bg-white"
+                                                            onClick={() => removeImage(qIndex)}
+                                                        >
+                                                            <X className="h-3 w-3" />
+                                                        </Button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="border-2 border-dashed rounded-md p-6 text-center">
+                                                        <input
+                                                            type="file"
+                                                            accept="image/*"
+                                                            className="hidden"
+                                                            ref={fileInputRef}
+                                                            onChange={(e) => {
+                                                                const file = e.target.files[0];
+                                                                if (file) {
+                                                                    handleImageUpload(qIndex, file);
+                                                                }
+                                                                e.target.value = '';
+                                                            }}
+                                                        />
+                                                        <Button
+                                                            type="button"
+                                                            variant="outline"
+                                                            onClick={() => fileInputRef.current?.click()}
+                                                            disabled={uploadingImages[qIndex]}
+                                                            className="flex items-center gap-2"
+                                                        >
+                                                            {uploadingImages[qIndex] ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <Upload className="h-4 w-4" />
+                                                            )}
+                                                            {uploadingImages[qIndex] ? "Uploading..." : "Upload Image"}
+                                                        </Button>
+                                                        <p className="text-sm text-gray-500 mt-2">
+                                                            Supports JPG, PNG, GIF (Max 5MB)
+                                                        </p>
+                                                    </div>
+                                                )}
                                             </div>
-                                        ) : (
+                                        )}
+
+                                        {/* Options for multiple choice questions and image+text questions */}
+                                        {(q.type === QUESTION_TYPES.SINGLE_CHOICE ||
+                                            q.type === QUESTION_TYPES.MULTIPLE_CHOICE ||
+                                            q.type === QUESTION_TYPES.IMAGE_TEXT) ? (
                                             <>
                                                 <div className="space-y-2">
                                                     <Label>Options</Label>
                                                     <div className="space-y-3">
                                                         {q.options.map((opt, oIndex) => (
                                                             <div key={oIndex} className="flex gap-2 items-center">
-                                                                {q.type === QUESTION_TYPES.SINGLE_CHOICE ? (
+                                                                {q.type === QUESTION_TYPES.MULTIPLE_CHOICE ? (
+                                                                    <Checkbox
+                                                                        checked={q.correctAnswers?.includes(oIndex) || false}
+                                                                        onCheckedChange={() => handleCorrectAnswerChange(qIndex, oIndex)}
+                                                                    />
+                                                                ) : (
                                                                     <input
                                                                         type="radio"
                                                                         name={`correct-${q.id}`}
                                                                         checked={parseInt(q.correctAnswer) === oIndex}
                                                                         onChange={() => handleCorrectAnswerChange(qIndex, oIndex)}
                                                                         className="h-4 w-4"
-                                                                    />
-                                                                ) : (
-                                                                    <Checkbox
-                                                                        checked={q.correctAnswers?.includes(oIndex) || false}
-                                                                        onCheckedChange={() => handleCorrectAnswerChange(qIndex, oIndex)}
                                                                     />
                                                                 )}
                                                                 <Input
@@ -482,7 +630,14 @@ export default function AssessmentEditor() {
                                                     </Button>
                                                 )}
                                             </>
-                                        )}
+                                        ) : q.type === QUESTION_TYPES.PARAGRAPH ? (
+                                            <div className="space-y-2">
+                                                <Label>Answer Format</Label>
+                                                <div className="p-4 border rounded-md bg-gray-50">
+                                                    <p className="text-gray-600">Paragraph answer field will be shown to students</p>
+                                                </div>
+                                            </div>
+                                        ) : null}
                                     </div>
 
                                     <Button

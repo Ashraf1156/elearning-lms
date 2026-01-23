@@ -4,9 +4,7 @@ import { auth, db } from "../lib/firebase";
 import { doc, getDoc, onSnapshot } from "firebase/firestore";
 import { Loader2 } from "lucide-react";
 import { isFirebaseInitialized } from "../lib/firebase";
-import { hasPermission as checkPermission, canAccessRoute } from "../lib/rbac";
-
-
+import { hasPermission as checkPermission, canAccessRoute, isGuestAccessExpired } from "../lib/rbac";
 
 const AuthContext = createContext({});
 
@@ -16,6 +14,7 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [userData, setUserData] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [guestExpired, setGuestExpired] = useState(false);
 
     useEffect(() => {
         const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
@@ -26,23 +25,31 @@ export const AuthProvider = ({ children }) => {
                     doc(db, "users", user.uid),
                     (doc) => {
                         if (doc.exists()) {
-                            setUserData(doc.data());
+                            const data = doc.data();
+                            setUserData(data);
+
+                            // Check if guest access has expired
+                            if (data.role === 'guest' && isGuestAccessExpired(data)) {
+                                setGuestExpired(true);
+                            } else {
+                                setGuestExpired(false);
+                            }
                         } else {
                             // User authenticated but no profile doc exists yet
                             setUserData(null);
+                            setGuestExpired(false);
                         }
                         setLoading(false);
                     },
                     (error) => {
                         console.error("Error fetching user data:", error);
-                        // If we can't get user details, we still let them in as 'user' but maybe without profile data
-                        // Or treating it as a failure depending on strictness. For now, stop loading.
                         setLoading(false);
                     }
                 );
                 return () => unsubscribeSnapshot();
             } else {
                 setUserData(null);
+                setGuestExpired(false);
                 setLoading(false);
             }
         });
@@ -50,7 +57,10 @@ export const AuthProvider = ({ children }) => {
         return () => unsubscribeAuth();
     }, []);
 
-    const signOut = () => firebaseSignOut(auth);
+    const signOut = () => {
+        setGuestExpired(false);
+        return firebaseSignOut(auth);
+    };
 
     // Role and permission helpers
     const hasRole = (role) => {
@@ -60,11 +70,23 @@ export const AuthProvider = ({ children }) => {
 
     const hasPermission = (permission) => {
         if (!userData || !userData.role) return false;
+
+        // If guest access expired, deny all permissions
+        if (userData.role === 'guest' && guestExpired) {
+            return false;
+        }
+
         return checkPermission(userData, permission);
     };
 
     const canAccess = (route) => {
         if (!userData || !userData.role) return false;
+
+        // If guest access expired, deny all access except logout/login
+        if (userData.role === 'guest' && guestExpired) {
+            return false;
+        }
+
         return canAccessRoute(userData, route);
     };
 
@@ -72,6 +94,7 @@ export const AuthProvider = ({ children }) => {
         user,
         userData,
         loading,
+        guestExpired,
         signOut,
         hasRole,
         hasPermission,

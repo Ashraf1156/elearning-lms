@@ -2,7 +2,7 @@
 // Run this in the browser console on http://localhost:5173/admin
 
 import { getAuth } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc,setDoc } from 'firebase/firestore';
 import { db } from './src/lib/firebase';
 
 async function checkAndFixAdminRole() {

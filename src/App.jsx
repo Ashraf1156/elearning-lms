@@ -21,6 +21,17 @@ const ResetPassword = React.lazy(() => import("./pages/ResetPassword"));
 const Profile = React.lazy(() => import("./pages/Profile"));
 const TestSetup = React.lazy(() => import("./pages/TestSetup"));
 
+// Guest Components
+const GuestLayout = React.lazy(() => import("./pages/guest/GuestLayout"));
+const GuestDashboard = React.lazy(() => import("./pages/guest/GuestDashboard"));
+const GuestStudents = React.lazy(() => import("./pages/guest/GuestStudents"));
+const GuestInstructors = React.lazy(() => import("./pages/guest/GuestInstructors"));
+const GuestCourses = React.lazy(() => import("./pages/guest/GuestCourses"));
+const GuestAssessments = React.lazy(() => import("./pages/guest/GuestAssessments"));
+const GuestAnnouncements = React.lazy(() => import("./pages/guest/GuestAnnouncements"));
+const GuestAnalytics = React.lazy(() => import("./pages/guest/GuestAnalytics"));
+const GuestAssignments = React.lazy(() => import("./pages/guest/GuestAssignments"));
+
 // Loading fallback component
 const PageLoader = () => (
   <div className="flex h-screen w-full items-center justify-center">
@@ -41,11 +52,32 @@ function App() {
                   <Route path="/signup" element={<Signup />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
 
-
                   {/* Legal Pages (Public) */}
                   <Route path="/terms" element={<Layout><Terms /></Layout>} />
                   <Route path="/privacy" element={<Layout><Privacy /></Layout>} />
 
+                  {/* Guest Routes */}
+                  <Route
+                    path="/guest/*"
+                    element={
+                      <ProtectedRoute allowedRoles={['guest']}>
+                        <GuestLayout />
+                      </ProtectedRoute>
+                    }
+                  >
+                    <Route index element={<Navigate to="dashboard" replace />} />
+                    <Route path="dashboard" element={<GuestDashboard />} />
+                    <Route path="students" element={<GuestStudents />} />
+                    <Route path="instructors" element={<GuestInstructors />} />
+                    <Route path="courses" element={<GuestCourses />} />
+                    <Route path="assessments" element={<GuestAssessments />} />
+                    <Route path="announcements" element={<GuestAnnouncements />} />
+                    <Route path="analytics" element={<GuestAnalytics />} />
+                    <Route path="assignments" element={<GuestAssignments />} />
+                    <Route path="*" element={<Navigate to="dashboard" replace />} />
+                  </Route>
+
+                  {/* Main Layout Routes */}
                   <Route element={<Layout />}>
                     <Route
                       path="/profile"
@@ -87,19 +119,34 @@ function App() {
                         </ProtectedRoute>
                       }
                     />
-                    <Route path="/profile" element={<ProtectedRoute allowedRoles={['admin', 'instructor', 'partner_instructor', 'student']}><Profile /></ProtectedRoute>} />
                     <Route path="/test-setup" element={<TestSetup />} />
                   </Route>
 
-                  {/* Default redirect based on role is handled in ProtectedRoute, 
-                  but for root path we can redirect to a default or landing page.
-                  For now, let's redirect to student dashboard as default or login.
-              */}
-                  <Route path="/" element={<Navigate to="/student" replace />} />
+                  {/* Default redirect based on role */}
+                  <Route path="/" element={
+                    <ProtectedRoute>
+                      {({ userData }) => {
+                        if (!userData) return <Navigate to="/login" replace />;
+
+                        switch (userData.role) {
+                          case 'admin':
+                            return <Navigate to="/admin" replace />;
+                          case 'instructor':
+                            return <Navigate to="/instructor" replace />;
+                          case 'partner_instructor':
+                            return <Navigate to="/partner-instructor" replace />;
+                          case 'guest':
+                            return <Navigate to="/guest/dashboard" replace />;
+                          case 'student':
+                          default:
+                            return <Navigate to="/student" replace />;
+                        }
+                      }}
+                    </ProtectedRoute>
+                  } />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Suspense>
-
             </AuthProvider>
           </ToastProvider>
         </ModalProvider>

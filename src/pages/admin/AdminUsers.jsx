@@ -11,11 +11,11 @@ import {
 } from "../../components/ui/table";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Trash2, Ban, CheckCircle, Users, GraduationCap, Eye, ArrowUpCircle, X, Search, Building2, Shield, UserCheck, MapPin, Mail } from "lucide-react";
+import { Trash2, Ban, CheckCircle, Users, GraduationCap, Eye, ArrowUpCircle, X, Search, Building2, Shield, UserCheck, MapPin, Mail, Clock, UserCog, EyeOff } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../contexts/AuthContext";
-import { ROLES, getRoleDisplayName, getRoleDescription } from "../../lib/rbac";
-import { logRoleChange, logSuspensionChange, logPermissionChange } from "../../lib/auditLog";
+import { ROLES, getRoleDisplayName, getRoleDescription, calculateGuestAccessExpiry, isGuestAccessExpired } from "../../lib/rbac";
+import { logRoleChange, logSuspensionChange, logPermissionChange, logGuestAccessRevoked } from "../../lib/auditLog";
 
 export default function AdminUsers() {
     const { user, userData } = useAuth();
@@ -44,7 +44,15 @@ export default function AdminUsers() {
     const [permissionData, setPermissionData] = useState({
         userId: null,
         permissions: {},
-        targetUser: null
+        targetUser: null,
+        role: ''
+    });
+
+    const [showGuestAccessModal, setShowGuestAccessModal] = useState(false);
+    const [guestAccessData, setGuestAccessData] = useState({
+        userId: null,
+        targetUser: null,
+        action: '' // 'revoke' or 'extend'
     });
 
     // Fetch all institutions on component mount
@@ -214,6 +222,7 @@ export default function AdminUsers() {
         const roleNames = {
             [ROLES.STUDENT]: "Student",
             [ROLES.PARTNER_INSTRUCTOR]: "Partner Instructor",
+            [ROLES.GUEST]: "Guest",
             [ROLES.INSTRUCTOR]: "Instructor"
         };
 
@@ -228,7 +237,36 @@ export default function AdminUsers() {
                 updatedAt: new Date().toISOString()
             };
 
-            // If changing to partner instructor, keep or set institutionId
+            // Handle guest role specific setup
+            if (newRole === ROLES.GUEST) {
+                // Set guest access expiry
+                updateData.guestAccessExpiry = calculateGuestAccessExpiry();
+                // Set default guest permissions
+                updateData.permissions = {
+                    view_all_students_institution: true,
+                    view_all_instructors_institution: true,
+                    manage_student_assignments: true,
+                    create_institution_assessments: true,
+                    preview_all_courses: true,
+                    create_institution_announcements: true,
+                    view_institution_analytics: true,
+                    view_courses: true,
+                    view_course_content: true,
+                    send_messages: true
+                };
+
+                // Require institution assignment for guests
+                if (!targetUser.institutionId) {
+                    alert("Guest users must be assigned to an institution. Please assign an institution first.");
+                    return;
+                }
+            } else if (oldRole === ROLES.GUEST && newRole !== ROLES.GUEST) {
+                // Clear guest-specific fields when leaving guest role
+                updateData.guestAccessExpiry = null;
+                updateData.permissions = null;
+            }
+
+            // Handle partner instructor role specific setup
             if (newRole === ROLES.PARTNER_INSTRUCTOR) {
                 // Set default partner instructor permissions
                 updateData.permissions = {
@@ -241,11 +279,9 @@ export default function AdminUsers() {
                     view_course_content: true
                 };
 
-                // If user already has an institutionId (from being a partner instructor before), keep it
+                // If user already has an institutionId, keep it
                 if (!targetUser.institutionId) {
-                    // In a real app, you might want to prompt admin to select an institution
-                    // For now, we'll set a default or leave it null
-                    updateData.institutionId = null; // Admin should assign institution separately
+                    updateData.institutionId = null;
                 }
             } else if (oldRole === ROLES.PARTNER_INSTRUCTOR && newRole !== ROLES.PARTNER_INSTRUCTOR) {
                 // Clear permissions and institutionId when leaving partner instructor role
@@ -267,7 +303,7 @@ export default function AdminUsers() {
             );
 
             // Log permission change if applicable
-            if (newRole === ROLES.PARTNER_INSTRUCTOR) {
+            if (newRole === ROLES.PARTNER_INSTRUCTOR || newRole === ROLES.GUEST) {
                 await logPermissionChange(
                     user.uid,
                     userData.email,
@@ -275,7 +311,7 @@ export default function AdminUsers() {
                     targetUser.email,
                     targetUser.permissions || {},
                     updateData.permissions || {},
-                    "Initial partner instructor permissions assigned"
+                    `Initial ${newRole} permissions assigned`
                 );
             }
 
@@ -296,9 +332,9 @@ export default function AdminUsers() {
     };
 
     const handleOpenPermissionModal = (targetUser) => {
-        setPermissionData({
-            userId: targetUser.id,
-            permissions: targetUser.permissions || {
+        let defaultPermissions = {};
+        if (targetUser.role === ROLES.PARTNER_INSTRUCTOR) {
+            defaultPermissions = {
                 view_assigned_courses: true,
                 view_assigned_students: true,
                 grade_assigned_assessments: true,
@@ -306,8 +342,27 @@ export default function AdminUsers() {
                 send_messages: true,
                 create_announcements: true,
                 view_course_content: true
-            },
-            targetUser: targetUser
+            };
+        } else if (targetUser.role === ROLES.GUEST) {
+            defaultPermissions = {
+                view_all_students_institution: true,
+                view_all_instructors_institution: true,
+                manage_student_assignments: true,
+                create_institution_assessments: true,
+                preview_all_courses: true,
+                create_institution_announcements: true,
+                view_institution_analytics: true,
+                view_courses: true,
+                view_course_content: true,
+                send_messages: true
+            };
+        }
+
+        setPermissionData({
+            userId: targetUser.id,
+            permissions: targetUser.permissions || defaultPermissions,
+            targetUser: targetUser,
+            role: targetUser.role
         });
         setShowPermissionModal(true);
     };
@@ -332,7 +387,7 @@ export default function AdminUsers() {
                 targetUser.email,
                 oldPermissions,
                 permissionData.permissions,
-                "Partner instructor permissions updated by admin"
+                `${permissionData.role} permissions updated by admin`
             );
 
             setUsers(users.map(u =>
@@ -343,11 +398,83 @@ export default function AdminUsers() {
             ));
 
             setShowPermissionModal(false);
-            setPermissionData({ userId: null, permissions: {}, targetUser: null });
+            setPermissionData({ userId: null, permissions: {}, targetUser: null, role: '' });
             alert("Permissions updated successfully!");
         } catch (error) {
             console.error("Error updating permissions:", error);
             alert("Failed to update permissions.");
+        }
+    };
+
+    const handleOpenGuestAccessModal = (targetUser, action) => {
+        setGuestAccessData({
+            userId: targetUser.id,
+            targetUser: targetUser,
+            action: action
+        });
+        setShowGuestAccessModal(true);
+    };
+
+    const handleGuestAccessAction = async () => {
+        if (!guestAccessData.userId || !guestAccessData.action) return;
+
+        try {
+            const targetUser = guestAccessData.targetUser;
+
+            if (guestAccessData.action === 'revoke') {
+                // Revoke guest access immediately
+                await updateDoc(doc(db, "users", guestAccessData.userId), {
+                    guestAccessExpiry: new Date().toISOString(), // Set to past date
+                    updatedAt: new Date().toISOString()
+                });
+
+                await logGuestAccessRevoked(
+                    user.uid,
+                    userData.email,
+                    guestAccessData.userId,
+                    targetUser.email,
+                    "Guest access revoked manually by admin"
+                );
+
+                setUsers(users.map(u =>
+                    u.id === guestAccessData.userId ? {
+                        ...u,
+                        guestAccessExpiry: new Date().toISOString()
+                    } : u
+                ));
+
+                alert("Guest access revoked successfully!");
+            } else if (guestAccessData.action === 'extend') {
+                // Extend guest access by the default duration
+                const newExpiry = calculateGuestAccessExpiry();
+                await updateDoc(doc(db, "users", guestAccessData.userId), {
+                    guestAccessExpiry: newExpiry,
+                    updatedAt: new Date().toISOString()
+                });
+
+                await logGuestAccessRevoked(
+                    user.uid,
+                    userData.email,
+                    guestAccessData.userId,
+                    targetUser.email,
+                    "Guest access extended by admin"
+                );
+
+                setUsers(users.map(u =>
+                    u.id === guestAccessData.userId ? {
+                        ...u,
+                        guestAccessExpiry: newExpiry
+                    } : u
+                ));
+
+                alert("Guest access extended successfully!");
+            }
+
+            setShowGuestAccessModal(false);
+            setGuestAccessData({ userId: null, targetUser: null, action: '' });
+        } catch (error) {
+            console.error("Error managing guest access:", error);
+            alert("Failed to manage guest access.");
         }
     };
 
@@ -376,6 +503,29 @@ export default function AdminUsers() {
     const getInstitutionName = (user) => {
         if (!user.institutionId) return "Not assigned";
         return institutions[user.institutionId]?.name || "Unknown Institution";
+    };
+
+    // Check if guest access is expired
+    const isGuestExpired = (user) => {
+        if (user.role !== ROLES.GUEST || !user.guestAccessExpiry) return false;
+        const expiryDate = new Date(user.guestAccessExpiry);
+        return expiryDate < new Date();
+    };
+
+    // Format time remaining for guest access
+    const getGuestTimeRemaining = (user) => {
+        if (user.role !== ROLES.GUEST || !user.guestAccessExpiry) return null;
+
+        const expiryDate = new Date(user.guestAccessExpiry);
+        const now = new Date();
+        const diffMs = expiryDate - now;
+
+        if (diffMs <= 0) return "Expired";
+
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+        return `${diffHours}h ${diffMinutes}m`;
     };
 
     if (loading) return (
@@ -430,6 +580,18 @@ export default function AdminUsers() {
                     Partner Instructors
                 </button>
                 <button
+                    onClick={() => setActiveTab(ROLES.GUEST)}
+                    className={cn(
+                        "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all",
+                        activeTab === ROLES.GUEST
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground hover:bg-background/50"
+                    )}
+                >
+                    <UserCog className="h-4 w-4" />
+                    Guests
+                </button>
+                <button
                     onClick={() => setActiveTab(ROLES.INSTRUCTOR)}
                     className={cn(
                         "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all",
@@ -462,14 +624,15 @@ export default function AdminUsers() {
                                     <TableHead>Email</TableHead>
                                     <TableHead>Role</TableHead>
                                     <TableHead>Status</TableHead>
-                                    {activeTab === ROLES.PARTNER_INSTRUCTOR && <TableHead>Institution</TableHead>}
+                                    {(activeTab === ROLES.PARTNER_INSTRUCTOR || activeTab === ROLES.GUEST) && <TableHead>Institution</TableHead>}
+                                    {activeTab === ROLES.GUEST && <TableHead>Access Expiry</TableHead>}
                                     <TableHead className="w-32">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredUsers.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={activeTab === ROLES.PARTNER_INSTRUCTOR ? 6 : 5} className="text-center py-8 text-muted-foreground">
+                                        <TableCell colSpan={activeTab === ROLES.GUEST ? 7 : (activeTab === ROLES.PARTNER_INSTRUCTOR ? 6 : 5)} className="text-center py-8 text-muted-foreground">
                                             No {getRoleDisplayName(activeTab).toLowerCase()}s found.
                                         </TableCell>
                                     </TableRow>
@@ -490,17 +653,37 @@ export default function AdminUsers() {
                                                     "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
                                                     targetUser.suspended
                                                         ? "bg-red-100 text-red-800"
-                                                        : "bg-green-100 text-green-800"
+                                                        : isGuestExpired(targetUser)
+                                                            ? "bg-orange-100 text-orange-800"
+                                                            : "bg-green-100 text-green-800"
                                                 )}>
-                                                    {targetUser.suspended ? "Suspended" : "Active"}
+                                                    {targetUser.suspended
+                                                        ? "Suspended"
+                                                        : isGuestExpired(targetUser)
+                                                            ? "Access Expired"
+                                                            : "Active"
+                                                    }
                                                 </span>
                                             </TableCell>
-                                            {activeTab === ROLES.PARTNER_INSTRUCTOR && (
+                                            {(activeTab === ROLES.PARTNER_INSTRUCTOR || activeTab === ROLES.GUEST) && (
                                                 <TableCell>
                                                     <div className="flex items-center gap-2">
                                                         <Building2 className="h-3 w-3 text-muted-foreground" />
                                                         <span className="text-sm">
                                                             {getInstitutionName(targetUser)}
+                                                        </span>
+                                                    </div>
+                                                </TableCell>
+                                            )}
+                                            {activeTab === ROLES.GUEST && (
+                                                <TableCell>
+                                                    <div className="flex items-center gap-2">
+                                                        <Clock className="h-3 w-3 text-muted-foreground" />
+                                                        <span className={cn(
+                                                            "text-sm font-medium",
+                                                            isGuestExpired(targetUser) ? "text-red-600" : "text-green-600"
+                                                        )}>
+                                                            {getGuestTimeRemaining(targetUser) || "No expiry"}
                                                         </span>
                                                     </div>
                                                 </TableCell>
@@ -555,6 +738,16 @@ export default function AdminUsers() {
                                                                         </button>
                                                                         <button
                                                                             onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.GUEST);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
+                                                                        >
+                                                                            <UserCog className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Guest</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
                                                                                 handleOpenRoleModal(targetUser, ROLES.INSTRUCTOR);
                                                                                 setOpenDropdown(null);
                                                                             }}
@@ -580,6 +773,16 @@ export default function AdminUsers() {
                                                                         </button>
                                                                         <button
                                                                             onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.GUEST);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
+                                                                        >
+                                                                            <UserCog className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Guest</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
                                                                                 handleOpenRoleModal(targetUser, ROLES.INSTRUCTOR);
                                                                                 setOpenDropdown(null);
                                                                             }}
@@ -591,17 +794,78 @@ export default function AdminUsers() {
                                                                     </>
                                                                 )}
 
+                                                                {targetUser.role === ROLES.GUEST && (
+                                                                    <>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenPermissionModal(targetUser);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
+                                                                        >
+                                                                            <Shield className="h-4 w-4" />
+                                                                            <span className="font-medium">Manage Permissions</span>
+                                                                        </button>
+                                                                        {!isGuestExpired(targetUser) && (
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    handleOpenGuestAccessModal(targetUser, 'revoke');
+                                                                                    setOpenDropdown(null);
+                                                                                }}
+                                                                                className="flex w-full items-center gap-3 px-4 py-3 text-sm text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950 transition-colors"
+                                                                            >
+                                                                                <EyeOff className="h-4 w-4" />
+                                                                                <span className="font-medium">Revoke Guest Access</span>
+                                                                            </button>
+                                                                        )}
+                                                                        {isGuestExpired(targetUser) && (
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    handleOpenGuestAccessModal(targetUser, 'extend');
+                                                                                    setOpenDropdown(null);
+                                                                                }}
+                                                                                className="flex w-full items-center gap-3 px-4 py-3 text-sm text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950 transition-colors"
+                                                                            >
+                                                                                <Clock className="h-4 w-4" />
+                                                                                <span className="font-medium">Extend Guest Access</span>
+                                                                            </button>
+                                                                        )}
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.PARTNER_INSTRUCTOR);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors"
+                                                                        >
+                                                                            <UserCheck className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Partner Instructor</span>
+                                                                        </button>
+                                                                    </>
+                                                                )}
+
                                                                 {targetUser.role === ROLES.INSTRUCTOR && targetUser.role !== ROLES.PARTNER_INSTRUCTOR && (
-                                                                    <button
-                                                                        onClick={() => {
-                                                                            handleOpenRoleModal(targetUser, ROLES.PARTNER_INSTRUCTOR);
-                                                                            setOpenDropdown(null);
-                                                                        }}
-                                                                        className="flex w-full items-center gap-3 px-4 py-3 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors"
-                                                                    >
-                                                                        <UserCheck className="h-4 w-4" />
-                                                                        <span className="font-medium">Make Partner Instructor</span>
-                                                                    </button>
+                                                                    <>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.PARTNER_INSTRUCTOR);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors"
+                                                                        >
+                                                                            <UserCheck className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Partner Instructor</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.GUEST);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
+                                                                        >
+                                                                            <UserCog className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Guest</span>
+                                                                        </button>
+                                                                    </>
                                                                 )}
 
                                                                 {/* Suspend/Unsuspend */}
@@ -713,13 +977,26 @@ export default function AdminUsers() {
 
                             <div>
                                 <label className="text-sm font-medium text-muted-foreground">Status</label>
-                                <p className={selectedUser.suspended ? "text-red-600" : "text-green-600"}>
-                                    {selectedUser.suspended ? "Suspended" : "Active"}
-                                </p>
+                                <div className="flex items-center gap-2">
+                                    <p className={selectedUser.suspended ? "text-red-600" : "text-green-600"}>
+                                        {selectedUser.suspended ? "Suspended" : "Active"}
+                                    </p>
+                                    {selectedUser.role === ROLES.GUEST && selectedUser.guestAccessExpiry && (
+                                        <span className={cn(
+                                            "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ml-2",
+                                            isGuestExpired(selectedUser)
+                                                ? "bg-orange-100 text-orange-800"
+                                                : "bg-blue-100 text-blue-800"
+                                        )}>
+                                            <Clock className="h-3 w-3 mr-1" />
+                                            {getGuestTimeRemaining(selectedUser)}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
 
                             {/* Institution Details */}
-                            {(selectedUser.role === ROLES.PARTNER_INSTRUCTOR || selectedUser.institutionId) && (
+                            {(selectedUser.role === ROLES.PARTNER_INSTRUCTOR || selectedUser.role === ROLES.GUEST || selectedUser.institutionId) && (
                                 <div>
                                     <label className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                                         <Building2 className="h-4 w-4" />
@@ -748,13 +1025,13 @@ export default function AdminUsers() {
                                 </div>
                             )}
 
-                            {selectedUser.role === ROLES.PARTNER_INSTRUCTOR && selectedUser.permissions && (
+                            {(selectedUser.role === ROLES.PARTNER_INSTRUCTOR || selectedUser.role === ROLES.GUEST) && selectedUser.permissions && (
                                 <div>
                                     <label className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                                         <Shield className="h-4 w-4" />
                                         Permissions
                                     </label>
-                                    <div className="mt-2 space-y-2 p-3 bg-muted rounded-md">
+                                    <div className="mt-2 space-y-2 p-3 bg-muted rounded-md max-h-40 overflow-y-auto">
                                         {Object.entries(selectedUser.permissions).map(([key, value]) => (
                                             <div key={key} className="flex items-center justify-between">
                                                 <span className="text-sm capitalize">{key.replace(/_/g, ' ')}</span>
@@ -766,6 +1043,19 @@ export default function AdminUsers() {
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                            )}
+
+                            {selectedUser.role === ROLES.GUEST && selectedUser.guestAccessExpiry && (
+                                <div>
+                                    <label className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                                        <Clock className="h-4 w-4" />
+                                        Guest Access Expiry
+                                    </label>
+                                    <p className={isGuestExpired(selectedUser) ? "text-red-600" : "text-green-600"}>
+                                        {new Date(selectedUser.guestAccessExpiry).toLocaleString()}
+                                        {isGuestExpired(selectedUser) && " (Expired)"}
+                                    </p>
                                 </div>
                             )}
 
@@ -816,7 +1106,7 @@ export default function AdminUsers() {
                             <div>
                                 <label className="block text-sm font-medium mb-2">Change to:</label>
                                 <div className="space-y-2">
-                                    {[ROLES.PARTNER_INSTRUCTOR, ROLES.INSTRUCTOR, ROLES.STUDENT].map(role => (
+                                    {[ROLES.PARTNER_INSTRUCTOR, ROLES.GUEST, ROLES.INSTRUCTOR, ROLES.STUDENT].map(role => (
                                         role !== roleModalData.targetUser?.role && (
                                             <button
                                                 key={role}
@@ -868,37 +1158,77 @@ export default function AdminUsers() {
                             <div>
                                 <p className="text-sm text-muted-foreground mb-4">
                                     User: <span className="font-medium text-foreground">{permissionData.targetUser?.email}</span>
+                                    <br />
+                                    Role: <span className="font-medium text-foreground">{getRoleDisplayName(permissionData.role)}</span>
                                 </p>
                             </div>
 
                             <div className="space-y-3">
-                                {[
-                                    'view_assigned_courses',
-                                    'view_assigned_students',
-                                    'grade_assigned_assessments',
-                                    'provide_feedback',
-                                    'send_messages',
-                                    'create_announcements',
-                                    'view_course_content'
-                                ].map(permission => (
-                                    <label key={permission} className="flex items-center justify-between p-3 rounded-md border border-input hover:bg-accent transition-colors">
-                                        <div>
-                                            <span className="font-medium capitalize">{permission.replace(/_/g, ' ')}</span>
-                                        </div>
-                                        <input
-                                            type="checkbox"
-                                            checked={permissionData.permissions[permission] || false}
-                                            onChange={(e) => setPermissionData({
-                                                ...permissionData,
-                                                permissions: {
-                                                    ...permissionData.permissions,
-                                                    [permission]: e.target.checked
-                                                }
-                                            })}
-                                            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                                        />
-                                    </label>
-                                ))}
+                                {permissionData.role === ROLES.PARTNER_INSTRUCTOR ? (
+                                    // Partner Instructor Permissions
+                                    [
+                                        'view_assigned_courses',
+                                        'view_assigned_students',
+                                        'grade_assigned_assessments',
+                                        'provide_feedback',
+                                        'send_messages',
+                                        'create_announcements',
+                                        'view_course_content'
+                                    ].map(permission => (
+                                        <label key={permission} className="flex items-center justify-between p-3 rounded-md border border-input hover:bg-accent transition-colors">
+                                            <div>
+                                                <span className="font-medium capitalize">{permission.replace(/_/g, ' ')}</span>
+                                            </div>
+                                            <input
+                                                type="checkbox"
+                                                checked={permissionData.permissions[permission] || false}
+                                                onChange={(e) => setPermissionData({
+                                                    ...permissionData,
+                                                    permissions: {
+                                                        ...permissionData.permissions,
+                                                        [permission]: e.target.checked
+                                                    }
+                                                })}
+                                                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                            />
+                                        </label>
+                                    ))
+                                ) : permissionData.role === ROLES.GUEST ? (
+                                    // Guest Permissions
+                                    [
+                                        'view_all_students_institution',
+                                        'view_all_instructors_institution',
+                                        'manage_student_assignments',
+                                        'create_institution_assessments',
+                                        'preview_all_courses',
+                                        'create_institution_announcements',
+                                        'view_institution_analytics',
+                                        'view_courses',
+                                        'view_course_content',
+                                        'send_messages'
+                                    ].map(permission => (
+                                        <label key={permission} className="flex items-center justify-between p-3 rounded-md border border-input hover:bg-accent transition-colors">
+                                            <div>
+                                                <span className="font-medium capitalize">{permission.replace(/_/g, ' ')}</span>
+                                                {permission === 'preview_all_courses' && (
+                                                    <p className="text-xs text-muted-foreground mt-1">Includes HTML content in modules</p>
+                                                )}
+                                            </div>
+                                            <input
+                                                type="checkbox"
+                                                checked={permissionData.permissions[permission] || false}
+                                                onChange={(e) => setPermissionData({
+                                                    ...permissionData,
+                                                    permissions: {
+                                                        ...permissionData.permissions,
+                                                        [permission]: e.target.checked
+                                                    }
+                                                })}
+                                                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                            />
+                                        </label>
+                                    ))
+                                ) : null}
                             </div>
                         </div>
 
@@ -906,6 +1236,62 @@ export default function AdminUsers() {
                             <Button variant="outline" onClick={() => setShowPermissionModal(false)}>Cancel</Button>
                             <Button onClick={handlePermissionUpdate} className="bg-indigo-600 hover:bg-indigo-700">
                                 Update Permissions
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Guest Access Management Modal */}
+            {showGuestAccessModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                    <div className="bg-background rounded-lg shadow-lg w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200">
+                        <button
+                            onClick={() => setShowGuestAccessModal(false)}
+                            className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
+                        >
+                            <X className="h-5 w-5" />
+                        </button>
+
+                        <h2 className="text-2xl font-bold mb-6">
+                            {guestAccessData.action === 'revoke' ? 'Revoke Guest Access' : 'Extend Guest Access'}
+                        </h2>
+
+                        <div className="space-y-4">
+                            <div>
+                                <p className="text-sm text-muted-foreground mb-2">
+                                    User: <span className="font-medium text-foreground">{guestAccessData.targetUser?.email}</span>
+                                </p>
+                                <p className="text-sm text-muted-foreground">
+                                    Current Expiry: <span className="font-medium text-foreground">
+                                        {guestAccessData.targetUser?.guestAccessExpiry
+                                            ? new Date(guestAccessData.targetUser.guestAccessExpiry).toLocaleString()
+                                            : 'No expiry set'
+                                        }
+                                    </span>
+                                </p>
+                            </div>
+
+                            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-4">
+                                <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                                    {guestAccessData.action === 'revoke'
+                                        ? 'This will immediately revoke the guest access. The user will no longer be able to use guest features.'
+                                        : `This will extend the guest access by ${process.env.REACT_APP_GUEST_ACCESS_DURATION_HOURS || 48} hours from now.`
+                                    }
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="mt-8 flex justify-end gap-2">
+                            <Button variant="outline" onClick={() => setShowGuestAccessModal(false)}>Cancel</Button>
+                            <Button
+                                onClick={handleGuestAccessAction}
+                                className={guestAccessData.action === 'revoke'
+                                    ? "bg-red-600 hover:bg-red-700"
+                                    : "bg-green-600 hover:bg-green-700"
+                                }
+                            >
+                                {guestAccessData.action === 'revoke' ? 'Revoke Access' : 'Extend Access'}
                             </Button>
                         </div>
                     </div>

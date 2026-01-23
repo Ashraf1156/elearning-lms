@@ -12,10 +12,15 @@ import {
     TrendingUp,
     Megaphone,
     FileText,
-    Building2
+    Building2,
+    UserCog,
+    Eye,
+    BarChart3,
+    ClipboardList
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
+import { ROLES } from "../lib/rbac";
 
 import logo from "../assets/logo.jpg";
 
@@ -26,7 +31,7 @@ export function Sidebar({ collapsed, setCollapsed }) {
 
     const links = [
         {
-            role: "admin",
+            role: ROLES.ADMIN,
             items: [
                 { href: "/admin/analytics", label: "Dashboard", icon: LayoutDashboard },
                 { href: "/admin/users", label: "Users", icon: Users },
@@ -37,18 +42,19 @@ export function Sidebar({ collapsed, setCollapsed }) {
             ],
         },
         {
-            role: "instructor",
+            role: ROLES.INSTRUCTOR,
             items: [
                 { href: "/instructor/analytics", label: "Dashboard", icon: LayoutDashboard },
                 { href: "/instructor/courses", label: "My Courses", icon: BookOpen },
                 { href: "/instructor/assessments", label: "Assessments", icon: FileText },
                 { href: "/instructor/announcements", label: "Announcements", icon: Megaphone },
                 { href: "/instructor/students", label: "Students", icon: Users },
+                { href: "/instructor/partner-instructors", label: "Partner Instructors", icon: UserCog },
                 { href: "/profile", label: "Profile", icon: Users },
             ],
         },
         {
-            role: "partner_instructor",
+            role: ROLES.PARTNER_INSTRUCTOR,
             items: [
                 { href: "/partner-instructor", label: "Dashboard", icon: LayoutDashboard },
                 { href: "/partner-instructor/courses", label: "My Courses", icon: BookOpen },
@@ -57,7 +63,21 @@ export function Sidebar({ collapsed, setCollapsed }) {
             ],
         },
         {
-            role: "student",
+            role: ROLES.GUEST,
+            items: [
+                { href: "/guest/dashboard", label: "Dashboard", icon: LayoutDashboard },
+                { href: "/guest/students", label: "Students", icon: Users },
+                { href: "/guest/instructors", label: "Instructors", icon: UserCog },
+                { href: "/guest/courses", label: "Preview Courses", icon: Eye },
+                { href: "/guest/assessments", label: "Assessments", icon: FileText },
+                { href: "/guest/announcements", label: "Announcements", icon: Megaphone },
+                { href: "/guest/analytics", label: "Analytics", icon: BarChart3 },
+                { href: "/guest/assignments", label: "Assignments", icon: ClipboardList },
+                { href: "/profile", label: "Profile", icon: Users },
+            ],
+        },
+        {
+            role: ROLES.STUDENT,
             items: [
                 { href: "/student", label: "My Learning", icon: GraduationCap },
                 { href: "/student/assessments", label: "Assessments", icon: FileText },
@@ -93,7 +113,7 @@ export function Sidebar({ collapsed, setCollapsed }) {
                                 to={link.href}
                                 className={cn(
                                     "group flex items-center gap-3 rounded-lg px-3 py-2 transition-all hover:text-primary",
-                                    location.pathname === link.href
+                                    location.pathname.startsWith(link.href) // Use startsWith to handle nested routes
                                         ? "bg-muted text-primary"
                                         : "text-muted-foreground",
                                     collapsed && "justify-center"
@@ -123,8 +143,15 @@ export function Sidebar({ collapsed, setCollapsed }) {
                         <div className="flex flex-col mb-2">
                             <span className="text-sm font-medium truncate">{userData?.email}</span>
                             <span className="text-xs text-muted-foreground capitalize">
-                                {role === 'partner_instructor' ? 'Partner Instructor' : role}
+                                {role === ROLES.PARTNER_INSTRUCTOR ? 'Partner Instructor' :
+                                    role === ROLES.GUEST ? 'Guest' :
+                                        role}
                             </span>
+                            {role === ROLES.GUEST && userData?.guestAccessExpiry && (
+                                <span className="text-xs text-orange-600 mt-1">
+                                    Expires: {new Date(userData.guestAccessExpiry).toLocaleDateString()}
+                                </span>
+                            )}
                         </div>
                         <button
                             onClick={signOut}
