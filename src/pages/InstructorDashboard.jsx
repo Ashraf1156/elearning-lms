@@ -7,6 +7,9 @@ import InstructorAnnouncements from "./instructor/InstructorAnnouncements";
 import InstructorAssessments from "./instructor/assessments/InstructorAssessments";
 import AssessmentEditor from "./instructor/assessments/AssessmentEditor";
 import AssessmentResults from "./instructor/assessments/AssessmentResults";
+import PartnerInstructors from "./instructor/mentor-management/PartnerInstructor";
+import MentorDetails from "./instructor/mentor-management/MentorDetails";
+// Add these imports
 
 export default function InstructorDashboard() {
     return (
@@ -24,6 +27,11 @@ export default function InstructorDashboard() {
             <Route path="assessments/new" element={<AssessmentEditor />} />
             <Route path="assessments/edit/:id" element={<AssessmentEditor />} />
             <Route path="assessments/results/:id" element={<AssessmentResults />} />
+
+            {/* Partner Instructor Management Routes */}
+            <Route path="partner-instructors" element={<PartnerInstructors />} />
+            <Route path="partner-instructors/:mentorId" element={<MentorDetails />} />
+
             <Route path="*" element={<Navigate to="analytics" replace />} />
         </Routes>
     );
