@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Loader2, X, Youtube, Type, Maximize2, Image, Table } from "lucide-react";
+import { Loader2, X, Youtube } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import RestrictedYouTubeEmbed from "./RestrictedYouTubeEmbed";
 import QuizEditor from "./QuizEditor";
@@ -8,6 +8,7 @@ import { Button } from "../../../../components/ui/button";
 import { Input } from "../../../../components/ui/input";
 import { saveModule, debugFindModule } from "../../../../services/moduleService";
 import { getAuth } from "firebase/auth";
+import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 
 export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) {
     console.log("📋 ModuleEditor received data:", JSON.stringify(moduleData, null, 2));
@@ -20,25 +21,14 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
         title: "",
         type: "text",
         content: "",
-        order: 0
+        order: 0,
+        quizData: []
     });
 
     const [loading, setLoading] = useState(false);
     const [videoUrl, setVideoUrl] = useState("");
     const [showRichTextEditor, setShowRichTextEditor] = useState(false);
     const [initialized, setInitialized] = useState(false);
-
-    useEffect(() => {
-        if (moduleData.module) {
-            setModule({
-                id: moduleData.module.id,
-                title: moduleData.module.title,
-                type: moduleData.module.type,
-                content: moduleData.module.content,  // ← THIS WILL NOW BE SET!
-                order: moduleData.module.order || 0
-            });
-        }
-    }, [moduleData]);
 
     // FIXED: Reset and update module state when moduleData changes
     useEffect(() => {
@@ -51,7 +41,8 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                 title: "",
                 type: "text",
                 content: "",
-                order: 0
+                order: 0,
+                quizData: []
             });
             setVideoUrl("");
             setInitialized(false);
@@ -77,13 +68,15 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
             console.log("Module title:", moduleData.module.title);
             console.log("Module content:", moduleData.module.content);
             console.log("Content length:", moduleData.module.content?.length || 0);
+            console.log("Quiz data:", moduleData.module.quizData);
 
             const newModuleState = {
                 id: moduleData.module.id || Date.now().toString(),
                 title: moduleData.module.title || "",
                 type: moduleData.module.type || "text",
                 content: moduleData.module.content || "",
-                order: moduleData.module.order || 0
+                order: moduleData.module.order || 0,
+                quizData: moduleData.module.quizData || []
             };
 
             console.log("📥 New module state:", newModuleState);
@@ -106,14 +99,15 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                 title: "",
                 type: moduleData.type || "text",
                 content: "",
-                order: 0
+                order: 0,
+                quizData: []
             };
             console.log("📥 New module:", newModule);
             setModule(newModule);
             setVideoUrl("");
             setInitialized(true);
         }
-    }, [moduleData, courseId]); // Depend on the entire moduleData object
+    }, [moduleData, courseId]);
 
     // Debug: Log current module state
     useEffect(() => {
@@ -123,7 +117,8 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                 title: module.title,
                 type: module.type,
                 contentLength: module.content?.length || 0,
-                contentPreview: module.content?.substring(0, 100)
+                contentPreview: module.content?.substring(0, 100),
+                quizDataCount: module.quizData?.length || 0
             });
             console.log("📊 Current videoUrl:", videoUrl);
         }
@@ -132,21 +127,10 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
     if (!isOpen) return null;
 
     const handleSave = async (e) => {
-        e.preventDefault(); // Prevent default form submission
-        e.stopPropagation(); // Stop event bubbling
+        e.preventDefault();
+        e.stopPropagation();
 
         console.log("💾 SAVE CLICKED - Starting save process...");
-        console.log("📤 Module data to save:", {
-            courseId,
-            sectionId: moduleData.sectionId,
-            subSectionId: moduleData.subSectionId,
-            module: {
-                ...module,
-                contentLength: module.content?.length || 0
-            },
-            isNew: moduleData.isNew,
-            videoUrl
-        });
 
         const auth = getAuth();
         const user = auth.currentUser;
@@ -163,8 +147,19 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
             return;
         }
 
-        if (!module.content.trim() && module.type === 'text') {
+        if (module.type === 'text' && !module.content.trim()) {
             if (!confirm("Content is empty. Save anyway?")) {
+                return;
+            }
+        }
+
+        if (module.type === 'video' && !videoUrl.trim() && !module.content.trim()) {
+            alert("Please enter a video URL");
+            return;
+        }
+
+        if (module.type === 'quiz' && (!module.quizData || module.quizData.length === 0)) {
+            if (!confirm("No quiz questions added. Save anyway?")) {
                 return;
             }
         }
@@ -174,24 +169,32 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
         try {
             console.log("📤 Attempting to save module...");
 
+            // Prepare module data based on type
+            let moduleToSave = { ...module };
+
+            if (module.type === 'video') {
+                moduleToSave.content = videoUrl;
+            } else if (module.type === 'quiz') {
+                // Ensure quizData is properly set
+                if (!moduleToSave.quizData) {
+                    moduleToSave.quizData = [];
+                }
+            }
+
             const savedModule = await saveModule({
                 courseId,
                 sectionId: moduleData.sectionId,
                 subSectionId: moduleData.subSectionId,
-                module,
+                module: moduleToSave,
                 isNew: moduleData.isNew,
-                videoUrl
+                videoUrl: module.type === 'video' ? videoUrl : null
             });
 
             console.log("✅ Module saved successfully:", savedModule);
 
-            // Show success message
             alert("Module saved successfully!");
-
-            // Call onClose to close the modal
             onClose();
 
-            // Optional: Trigger a custom event to refresh parent component
             window.dispatchEvent(new CustomEvent('module-saved', {
                 detail: {
                     courseId,
@@ -203,14 +206,46 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
 
         } catch (error) {
             console.error("❌ Error saving module:", error);
-            console.error("Error details:", {
-                code: error.code,
-                message: error.message,
-                stack: error.stack
-            });
             alert(`Failed to save module: ${error.message}`);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const renderEditorContent = () => {
+        switch (module.type) {
+            case 'quiz':
+                return (
+                    <QuizEditor
+                        module={module}
+                        setModule={(updatedModule) => {
+                            console.log("QuizEditor updated module:", updatedModule);
+                            setModule(updatedModule);
+                        }}
+                    />
+                );
+
+            case 'video':
+                return (
+                    <VideoEditor
+                        videoUrl={videoUrl}
+                        setVideoUrl={setVideoUrl}
+                        currentContent={module.content}
+                    />
+                );
+
+            case 'text':
+                return (
+                    <TextEditor
+                        module={module}
+                        setModule={setModule}
+                        showRichTextEditor={showRichTextEditor}
+                        setShowRichTextEditor={setShowRichTextEditor}
+                    />
+                );
+
+            default:
+                return null;
         }
     };
 
@@ -226,10 +261,10 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                 onSubmit={handleSave}
                 onKeyDown={(e) => {
                     if (e.key === 'Enter' && e.target.type !== 'textarea') {
-                        e.preventDefault(); // Prevent form submission on Enter key
+                        e.preventDefault();
                     }
                 }}
-                className="space-y-4"
+                className="space-y-6"
             >
                 <div className="text-xs text-gray-500 mb-2">
                     <div>Path: courses/{courseId}/sections/{moduleData?.sectionId}
@@ -242,34 +277,17 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                         <span className="px-2 py-1 rounded text-xs bg-gray-100 text-gray-800">
                             Type: {module.type.toUpperCase()}
                         </span>
-                        <span className="px-2 py-1 rounded text-xs bg-purple-100 text-purple-800">
-                            Content: {module.content?.length || 0} chars
-                        </span>
+                        {module.type === 'quiz' && (
+                            <span className="px-2 py-1 rounded text-xs bg-purple-100 text-purple-800">
+                                {module.quizData?.length || 0} Questions
+                            </span>
+                        )}
                     </div>
                 </div>
 
                 <TitleInput module={module} setModule={setModule} />
 
-                {module.type === 'video' && (
-                    <VideoEditor
-                        videoUrl={videoUrl}
-                        setVideoUrl={setVideoUrl}
-                        currentContent={module.content}
-                    />
-                )}
-
-                {module.type === 'text' && (
-                    <TextEditor
-                        module={module}
-                        setModule={setModule}
-                        showRichTextEditor={showRichTextEditor}
-                        setShowRichTextEditor={setShowRichTextEditor}
-                    />
-                )}
-
-                {module.type === 'quiz' && (
-                    <QuizEditor module={module} setModule={setModule} />
-                )}
+                {renderEditorContent()}
 
                 <ModalActions loading={loading} onClose={onClose} />
             </form>
@@ -283,7 +301,7 @@ function Modal({ isOpen, onClose, children }) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
             onClick={(e) => {
                 if (e.target === e.currentTarget) onClose();
             }}
@@ -292,7 +310,7 @@ function Modal({ isOpen, onClose, children }) {
                 initial={{ scale: 0.9, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.9, y: 20 }}
-                className="bg-background w-full max-w-2xl rounded-lg shadow-xl p-6 max-h-[90vh] overflow-y-auto"
+                className="bg-background w-full max-w-4xl rounded-lg shadow-xl p-6 max-h-[90vh] overflow-y-auto"
             >
                 {children}
             </motion.div>
@@ -301,7 +319,6 @@ function Modal({ isOpen, onClose, children }) {
 }
 
 function ModalHeader({ moduleType, isNew, onClose }) {
-    // FIXED: Show "Edit" instead of "Add" when editing existing module
     const titles = {
         'video': isNew ? "Add Video Lesson" : "Edit Video Lesson",
         'text': isNew ? "Add Text Lesson" : "Edit Text Lesson",
@@ -311,9 +328,9 @@ function ModalHeader({ moduleType, isNew, onClose }) {
     const title = titles[moduleType] || (isNew ? "Add Module" : "Edit Module");
 
     return (
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-6">
             <div>
-                <h2 className="text-xl font-bold">{title}</h2>
+                <h2 className="text-2xl font-bold">{title}</h2>
                 <p className="text-sm text-gray-500">
                     {isNew ? 'Create a new module' : 'Update existing module'}
                 </p>
@@ -325,7 +342,7 @@ function ModalHeader({ moduleType, isNew, onClose }) {
                 onClick={onClose}
                 className="hover:bg-gray-100"
             >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
             </Button>
         </div>
     );
@@ -333,16 +350,23 @@ function ModalHeader({ moduleType, isNew, onClose }) {
 
 function TitleInput({ module, setModule }) {
     return (
-        <div className="space-y-2">
-            <label className="text-sm font-medium">Title *</label>
-            <Input
-                required
-                value={module.title}
-                onChange={(e) => setModule({ ...module, title: e.target.value })}
-                placeholder="Module Title"
-                className="w-full"
-            />
-        </div>
+        <Card>
+            <CardHeader>
+                <CardTitle className="text-sm font-medium">Module Title</CardTitle>
+            </CardHeader>
+            <CardContent>
+                <div className="space-y-2">
+                    <label className="text-sm font-medium">Title *</label>
+                    <Input
+                        required
+                        value={module.title}
+                        onChange={(e) => setModule({ ...module, title: e.target.value })}
+                        placeholder="Enter module title"
+                        className="w-full"
+                    />
+                </div>
+            </CardContent>
+        </Card>
     );
 }
 
@@ -357,110 +381,127 @@ function VideoEditor({ videoUrl, setVideoUrl, currentContent }) {
     const youtubeId = extractYouTubeId(videoUrl || currentContent);
 
     return (
-        <div className="space-y-4">
-            <div className="space-y-2">
-                <label className="text-sm font-medium">YouTube Video URL *</label>
-                <div className="flex gap-2 items-center">
-                    <Input
-                        value={videoUrl || currentContent}
-                        onChange={(e) => setVideoUrl(e.target.value)}
-                        placeholder="https://www.youtube.com/watch?v=..."
-                        className="flex-1"
-                        required
-                    />
-                    <div className="p-2 border rounded">
-                        <Youtube className="h-6 w-6 text-red-500" />
+        <Card>
+            <CardHeader>
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Youtube className="h-5 w-5 text-red-500" />
+                    Video Settings
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                <div className="space-y-2">
+                    <label className="text-sm font-medium">YouTube Video URL *</label>
+                    <div className="flex gap-2 items-center">
+                        <Input
+                            value={videoUrl || currentContent}
+                            onChange={(e) => setVideoUrl(e.target.value)}
+                            placeholder="https://www.youtube.com/watch?v=..."
+                            className="flex-1"
+                            required
+                        />
+                        <div className="p-2 border rounded">
+                            <Youtube className="h-6 w-6 text-red-500" />
+                        </div>
                     </div>
+                    <p className="text-xs text-gray-500">
+                        Enter a valid YouTube URL. The video will be embedded in your course.
+                    </p>
                 </div>
-                <p className="text-xs text-gray-500">
-                    Enter a valid YouTube URL. The video will be embedded in your course.
-                </p>
-            </div>
 
-            {youtubeId && (
-                <div className="border rounded-lg p-4">
-                    <p className="text-sm font-medium mb-2">Preview:</p>
-                    <RestrictedYouTubeEmbed videoId={youtubeId} />
-                </div>
-            )}
-        </div>
+                {youtubeId && (
+                    <div className="border rounded-lg p-4">
+                        <p className="text-sm font-medium mb-2">Preview:</p>
+                        <RestrictedYouTubeEmbed videoId={youtubeId} />
+                    </div>
+                )}
+            </CardContent>
+        </Card>
     );
 }
 
 function TextEditor({ module, setModule, showRichTextEditor, setShowRichTextEditor }) {
-    // Debug: Log the content being displayed
     useEffect(() => {
         console.log("📝 TextEditor content DEBUG:");
         console.log("Content:", module.content);
         console.log("Content length:", module.content?.length || 0);
-        console.log("Content type:", typeof module.content);
-        console.log("Is content HTML?", module.content?.includes('<') ? 'Yes' : 'No');
     }, [module.content]);
 
     const handleTextareaChange = (e) => {
         const newContent = e.target.value;
         console.log("📝 Textarea onChange - new content:", newContent);
-        console.log("📝 Content length:", newContent.length);
         setModule({ ...module, content: newContent });
     };
 
     const handleRichTextEditorChange = (content) => {
         console.log("📝 RichTextEditor onChange:", content);
-        console.log("📝 Content length:", content.length);
-        console.log("📝 Is HTML?", content.includes('<') ? 'Yes' : 'No');
         setModule({ ...module, content });
     };
 
     return (
-        <div className="space-y-4">
-            <div className="flex justify-between items-center">
-                <label className="text-sm font-medium">Content *</label>
-                <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500">
-                        {module.content?.length || 0} characters
-                    </span>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowRichTextEditor(true)}
-                        className="flex items-center gap-2"
-                    >
-                        <Maximize2 className="h-4 w-4" />
-                        Open Enhanced Editor
-                    </Button>
-                </div>
-            </div>
-            <textarea
-                className="flex min-h-[200px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                value={module.content || ""}
-                onChange={handleTextareaChange}
-                placeholder="# Lesson Content..."
-                required
-            />
-            <div className="text-xs text-gray-500">
-                <p>Use Markdown or the enhanced editor for rich formatting.</p>
-                {module.content && module.content.length > 0 && (
-                    <div className="mt-2 p-2 border rounded bg-gray-50">
-                        <p className="font-medium">Preview:</p>
-                        <div
-                            className="mt-1 text-sm"
-                            dangerouslySetInnerHTML={{ __html: module.content.substring(0, 200) + (module.content.length > 200 ? '...' : '') }}
-                        />
+        <Card>
+            <CardHeader>
+                <CardTitle className="text-sm font-medium">Text Content</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                        <label className="text-sm font-medium">Content *</label>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">
+                                {module.content?.length || 0} characters
+                            </span>
+                        </div>
                     </div>
-                )}
-            </div>
+                    <textarea
+                        className="flex min-h-[300px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-y"
+                        value={module.content || ""}
+                        onChange={handleTextareaChange}
+                        placeholder="# Lesson Content...
 
-            <AnimatePresence>
-                {showRichTextEditor && (
-                    <RichTextEditor
-                        content={module.content || ""}
-                        onChange={handleRichTextEditorChange}
-                        onClose={() => setShowRichTextEditor(false)}
+Use Markdown formatting:
+# Heading 1
+## Heading 2
+**bold text**
+*italic text*
+- List item
+[link text](https://example.com)"
+                        required
                     />
-                )}
-            </AnimatePresence>
-        </div>
+                    <div className="text-xs text-gray-500">
+                        <p>Use Markdown for rich formatting. Supports headings, bold, italic, lists, and links.</p>
+                        {module.content && module.content.length > 0 && (
+                            <div className="mt-2 p-2 border rounded bg-gray-50">
+                                <p className="font-medium">Preview (first 200 chars):</p>
+                                <div
+                                    className="mt-1 text-sm"
+                                    dangerouslySetInnerHTML={{
+                                        __html:
+                                            module.content
+                                                .substring(0, 200)
+                                                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                                                .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                                                .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                                                .replace(/\n/g, '<br>') +
+                                            (module.content.length > 200 ? '...' : '')
+                                    }}
+                                />
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <AnimatePresence>
+                    {showRichTextEditor && (
+                        <RichTextEditor
+                            content={module.content || ""}
+                            onChange={handleRichTextEditorChange}
+                            onClose={() => setShowRichTextEditor(false)}
+                        />
+                    )}
+                </AnimatePresence>
+            </CardContent>
+        </Card>
     );
 }
 

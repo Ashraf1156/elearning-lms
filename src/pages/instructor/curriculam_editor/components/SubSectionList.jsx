@@ -5,10 +5,11 @@ import { Card, CardContent } from "../../../../components/ui/card";
 import {
     ChevronDown, ChevronRight, Trash2, Edit2, Clock,
     GripVertical, Plus, MoreVertical, Copy, Folder,
-    Video, FileText, HelpCircle, BarChart
+    Video, FileText, HelpCircle
 } from "lucide-react";
 import ModuleList from "./ModuleList";
 import AddModuleButtons from "./AddModuleButtons";
+import ModuleEditor from "./ModuleEditor";
 import { ModalContext } from "../../../../contexts/ModalContext";
 import { useToast } from "../../../../contexts/ToastComponent";
 
@@ -18,11 +19,7 @@ const defaultModalFunctions = {
     showFormModal: () => Promise.resolve({}),
     showConfirmModal: () => Promise.resolve(false),
     showChoiceModal: () => Promise.resolve(null),
-    showSelectModal: () => Promise.resolve(null),
-    showMultiSelectModal: () => Promise.resolve([]),
-    showCustomModal: () => Promise.resolve(null),
     closeModal: () => { },
-    isOpen: false
 };
 
 export default function SubSectionList({
@@ -34,19 +31,17 @@ export default function SubSectionList({
     onEditSubSection,
     onDeleteSubSection,
     onDuplicateSubSection,
+    onModuleSaved,
     className = ""
 }) {
     const [expandedSubSections, setExpandedSubSections] = useState({});
     const [draggingSubSection, setDraggingSubSection] = useState(null);
     const [dragOverSubSection, setDragOverSubSection] = useState(null);
+    const [editingModule, setEditingModule] = useState(null);
 
-    // Get modal functions from context, use defaults if not available
+    // Get modal functions from context
     const modalContext = useContext(ModalContext);
-    const {
-        showFormModal,
-        showConfirmModal
-    } = modalContext || defaultModalFunctions;
-
+    const { showFormModal, showConfirmModal } = modalContext || defaultModalFunctions;
     const { toast } = useToast();
 
     const toggleSubSection = useCallback((subSectionId) => {
@@ -56,19 +51,47 @@ export default function SubSectionList({
         }));
     }, []);
 
+    // Handle module editing
+    const handleEditModule = useCallback((moduleData) => {
+        console.log("🔍 SubSectionList: Opening module editor:", {
+            moduleType: moduleData.module?.type,
+            moduleId: moduleData.module?.id,
+            isNew: moduleData.isNew
+        });
+        setEditingModule(moduleData);
+    }, []);
+
+    // Handle closing module editor
+    const handleCloseModuleEditor = useCallback(() => {
+        console.log("🔍 Closing module editor");
+        setEditingModule(null);
+    }, []);
+
+    // Handle module save
+    const handleModuleSaved = useCallback(() => {
+        console.log("🔍 Module saved, refreshing...");
+        setEditingModule(null);
+        if (onModuleSaved) {
+            onModuleSaved();
+        }
+        toast({
+            title: "Success",
+            description: "Module saved successfully",
+            variant: "default",
+        });
+    }, [onModuleSaved, toast]);
+
     const handleAddSubSection = useCallback(async () => {
         try {
-            // If parent provides onAddSubSection, use it
             if (onAddSubSection) {
                 onAddSubSection();
                 return;
             }
 
-            // Check if modal functions are available
             if (typeof showFormModal !== 'function') {
                 toast({
                     title: "Info",
-                    description: "Add sub-section functionality is not available in this context",
+                    description: "Add sub-section functionality is not available",
                     variant: "default",
                 });
                 return;
@@ -92,20 +115,6 @@ export default function SubSectionList({
                         required: false,
                         placeholder: "e.g., 45 min",
                         defaultValue: "60 min"
-                    },
-                    {
-                        name: "description",
-                        label: "Description (Optional)",
-                        type: "textarea",
-                        required: false,
-                        placeholder: "Enter description"
-                    },
-                    {
-                        name: "objectives",
-                        label: "Learning Objectives (Optional)",
-                        type: "textarea",
-                        required: false,
-                        placeholder: "Enter comma-separated objectives"
                     }
                 ],
                 submitText: "Add Sub-Section",
@@ -134,7 +143,7 @@ export default function SubSectionList({
             if (typeof showFormModal !== 'function') {
                 toast({
                     title: "Info",
-                    description: "Edit sub-section functionality is not available in this context",
+                    description: "Edit sub-section functionality is not available",
                     variant: "default",
                 });
                 return;
@@ -158,22 +167,6 @@ export default function SubSectionList({
                         required: false,
                         defaultValue: subSection.duration || "60 min",
                         placeholder: "e.g., 45 min"
-                    },
-                    {
-                        name: "description",
-                        label: "Description",
-                        type: "textarea",
-                        required: false,
-                        defaultValue: subSection.description || "",
-                        placeholder: "Enter description"
-                    },
-                    {
-                        name: "objectives",
-                        label: "Learning Objectives",
-                        type: "textarea",
-                        required: false,
-                        defaultValue: subSection.objectives?.join(', ') || "",
-                        placeholder: "Enter comma-separated objectives"
                     }
                 ],
                 submitText: "Save Changes",
@@ -181,12 +174,10 @@ export default function SubSectionList({
             });
 
             if (result && onEditSubSection) {
-                onEditSubSection(subSection.id, {
+                await onEditSubSection(subSection.id, {
                     ...subSection,
                     title: result.title,
-                    duration: result.duration,
-                    description: result.description,
-                    objectives: result.objectives ? result.objectives.split(',').map(obj => obj.trim()).filter(obj => obj) : []
+                    duration: result.duration
                 });
                 toast({
                     title: "Success",
@@ -206,18 +197,9 @@ export default function SubSectionList({
 
     const handleDeleteSubSection = useCallback(async (subSectionId, subSectionTitle) => {
         try {
-            if (typeof showConfirmModal !== 'function') {
-                toast({
-                    title: "Info",
-                    description: "Delete functionality is not available in this context",
-                    variant: "default",
-                });
-                return;
-            }
-
             const confirmed = await showConfirmModal({
                 title: "Delete Sub-Section",
-                message: `Are you sure you want to delete "${subSectionTitle}"? This will also delete all modules within it.`,
+                message: `Are you sure you want to delete "${subSectionTitle}"?`,
                 confirmText: "Delete",
                 cancelText: "Cancel",
                 variant: "destructive"
@@ -236,53 +218,9 @@ export default function SubSectionList({
         }
     }, [showConfirmModal, onDeleteSubSection, toast]);
 
-    const handleDuplicateSubSection = useCallback(async (subSection) => {
-        try {
-            if (typeof showFormModal !== 'function') {
-                toast({
-                    title: "Info",
-                    description: "Duplicate functionality is not available in this context",
-                    variant: "default",
-                });
-                return;
-            }
-
-            const result = await showFormModal({
-                title: "Duplicate Sub-Section",
-                fields: [{
-                    name: "title",
-                    label: "New Sub-Section Title",
-                    type: "text",
-                    required: true,
-                    defaultValue: `${subSection.title} (Copy)`,
-                    placeholder: "Enter new sub-section title"
-                }],
-                submitText: "Duplicate",
-                cancelText: "Cancel"
-            });
-
-            if (result && onDuplicateSubSection) {
-                await onDuplicateSubSection(subSection.id, result.title);
-                toast({
-                    title: "Success",
-                    description: "Sub-section duplicated successfully",
-                    variant: "default",
-                });
-            }
-        } catch (error) {
-            console.error("Error duplicating sub-section:", error);
-            toast({
-                title: "Error",
-                description: "Failed to duplicate sub-section",
-                variant: "destructive",
-            });
-        }
-    }, [showFormModal, onDuplicateSubSection, toast]);
-
     const handleDragStart = useCallback((e, subSectionId) => {
         setDraggingSubSection(subSectionId);
         e.dataTransfer.setData('text/plain', subSectionId);
-        e.dataTransfer.effectAllowed = 'move';
     }, []);
 
     const handleDragOver = useCallback((e, subSectionId) => {
@@ -304,15 +242,6 @@ export default function SubSectionList({
         }
 
         try {
-            if (typeof showConfirmModal !== 'function') {
-                toast({
-                    title: "Info",
-                    description: "Drag and drop functionality is not available in this context",
-                    variant: "default",
-                });
-                return;
-            }
-
             const confirmed = await showConfirmModal({
                 title: "Reorder Sub-Sections",
                 message: "Are you sure you want to move this sub-section?",
@@ -321,7 +250,6 @@ export default function SubSectionList({
             });
 
             if (confirmed) {
-                // Implement reorderSubSections function
                 console.log(`Move sub-section ${draggedSubSectionId} to position of ${targetSubSectionId}`);
                 toast({
                     title: "Success",
@@ -341,6 +269,14 @@ export default function SubSectionList({
         setDragOverSubSection(null);
         setDraggingSubSection(null);
     }, [showConfirmModal, toast]);
+
+    // Calculate total module stats
+    const totalStats = {
+        video: subSections.reduce((sum, sub) => sum + (sub.modules?.filter(m => m.type === 'video').length || 0), 0),
+        text: subSections.reduce((sum, sub) => sum + (sub.modules?.filter(m => m.type === 'text').length || 0), 0),
+        quiz: subSections.reduce((sum, sub) => sum + (sub.modules?.filter(m => m.type === 'quiz').length || 0), 0),
+        total: subSections.reduce((sum, sub) => sum + (sub.modules?.length || 0), 0)
+    };
 
     if (!subSections || subSections.length === 0) {
         return (
@@ -371,87 +307,100 @@ export default function SubSectionList({
     }
 
     return (
-        <div className={`space-y-3 ${className}`}>
-            {/* Sub-sections Header with Stats */}
-            <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-2">
-                    <h3 className="font-semibold">Sub-sections</h3>
-                    <span className="text-xs px-2 py-1 bg-primary/10 text-primary rounded-full">
-                        {subSections.length} {subSections.length === 1 ? 'part' : 'parts'}
-                    </span>
-                    <span className="text-xs px-2 py-1 bg-secondary/10 text-secondary rounded-full">
-                        {subSections.reduce((sum, sub) => sum + (sub.modules?.length || 0), 0)} modules
-                    </span>
+        <>
+            <div className={`space-y-3 ${className}`}>
+                {/* Sub-sections Header */}
+                <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2">
+                        <h3 className="font-semibold">Sub-sections</h3>
+                        <span className="text-xs px-2 py-1 bg-primary/10 text-primary rounded-full">
+                            {subSections.length} {subSections.length === 1 ? 'part' : 'parts'}
+                        </span>
+                        <span className="text-xs px-2 py-1 bg-secondary/10 text-secondary rounded-full">
+                            {totalStats.total} modules
+                        </span>
+                    </div>
                 </div>
-            </div>
 
-            {/* Sub-sections Stats */}
-            <div className="grid grid-cols-4 gap-2 text-sm">
-                <div className="flex items-center gap-1 px-2 py-1 bg-blue-50 rounded">
-                    <Video className="h-3 w-3 text-blue-600" />
-                    <span className="font-medium">{subSections.reduce((sum, sub) => sum + (sub.modules?.filter(m => m.type === 'video').length || 0), 0)}</span>
-                    <span className="text-muted-foreground">videos</span>
+                {/* Stats */}
+                <div className="grid grid-cols-4 gap-2 text-sm">
+                    <div className="flex items-center gap-1 px-2 py-1 bg-blue-50 rounded">
+                        <Video className="h-3 w-3 text-blue-600" />
+                        <span className="font-medium">{totalStats.video}</span>
+                        <span className="text-muted-foreground">videos</span>
+                    </div>
+                    <div className="flex items-center gap-1 px-2 py-1 bg-green-50 rounded">
+                        <FileText className="h-3 w-3 text-green-600" />
+                        <span className="font-medium">{totalStats.text}</span>
+                        <span className="text-muted-foreground">texts</span>
+                    </div>
+                    <div className="flex items-center gap-1 px-2 py-1 bg-purple-50 rounded">
+                        <HelpCircle className="h-3 w-3 text-purple-600" />
+                        <span className="font-medium">{totalStats.quiz}</span>
+                        <span className="text-muted-foreground">quizzes</span>
+                    </div>
+                    <div className="flex items-center gap-1 px-2 py-1 bg-amber-50 rounded">
+                        <Clock className="h-3 w-3 text-amber-600" />
+                        <span className="font-medium">
+                            {subSections.reduce((sum, sub) => sum + (parseDuration(sub.duration) || 0), 0)} min
+                        </span>
+                        <span className="text-muted-foreground">total</span>
+                    </div>
                 </div>
-                <div className="flex items-center gap-1 px-2 py-1 bg-green-50 rounded">
-                    <FileText className="h-3 w-3 text-green-600" />
-                    <span className="font-medium">{subSections.reduce((sum, sub) => sum + (sub.modules?.filter(m => m.type === 'text').length || 0), 0)}</span>
-                    <span className="text-muted-foreground">texts</span>
-                </div>
-                <div className="flex items-center gap-1 px-2 py-1 bg-purple-50 rounded">
-                    <HelpCircle className="h-3 w-3 text-purple-600" />
-                    <span className="font-medium">{subSections.reduce((sum, sub) => sum + (sub.modules?.filter(m => m.type === 'quiz').length || 0), 0)}</span>
-                    <span className="text-muted-foreground">quizzes</span>
-                </div>
-                <div className="flex items-center gap-1 px-2 py-1 bg-amber-50 rounded">
-                    <Clock className="h-3 w-3 text-amber-600" />
-                    <span className="font-medium">
-                        {subSections.reduce((sum, sub) => sum + (parseDuration(sub.duration) || 0), 0)} min
-                    </span>
-                    <span className="text-muted-foreground">total</span>
-                </div>
-            </div>
 
-            {/* Sub-sections List */}
-            <div className="space-y-2">
-                {subSections.map((subSection, index) => (
-                    <SubSectionItem
-                        key={subSection.id}
-                        subSection={subSection}
-                        index={index}
-                        sectionId={sectionId}
-                        courseId={courseId}
-                        isExpanded={expandedSubSections[subSection.id]}
-                        isDragging={draggingSubSection === subSection.id}
-                        isDragOver={dragOverSubSection === subSection.id}
-                        onToggle={() => toggleSubSection(subSection.id)}
-                        onEdit={() => handleEditSubSection(subSection)}
-                        onDelete={() => handleDeleteSubSection(subSection.id, subSection.title)}
-                        onDuplicate={() => handleDuplicateSubSection(subSection)}
-                        onEditModule={onEditModule}
-                        onDragStart={(e) => handleDragStart(e, subSection.id)}
-                        onDragOver={(e) => handleDragOver(e, subSection.id)}
-                        onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleDrop(e, subSection.id)}
-                    />
-                ))}
-            </div>
+                {/* Sub-sections List */}
+                <div className="space-y-2">
+                    <AnimatePresence>
+                        {subSections.map((subSection, index) => (
+                            <SubSectionItem
+                                key={subSection.id || `subsec-${index}`}
+                                subSection={subSection}
+                                index={index}
+                                sectionId={sectionId}
+                                courseId={courseId}
+                                isExpanded={expandedSubSections[subSection.id]}
+                                isDragging={draggingSubSection === subSection.id}
+                                isDragOver={dragOverSubSection === subSection.id}
+                                onToggle={() => toggleSubSection(subSection.id)}
+                                onEdit={() => handleEditSubSection(subSection)}
+                                onDelete={() => handleDeleteSubSection(subSection.id, subSection.title)}
+                                onEditModule={handleEditModule}
+                                onDragStart={(e) => handleDragStart(e, subSection.id)}
+                                onDragOver={(e) => handleDragOver(e, subSection.id)}
+                                onDragLeave={handleDragLeave}
+                                onDrop={(e) => handleDrop(e, subSection.id)}
+                            />
+                        ))}
+                    </AnimatePresence>
+                </div>
 
-            {/* Add Sub-section Button */}
-            <motion.div
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                className="pt-2"
-            >
-                <Button
-                    onClick={handleAddSubSection}
-                    variant="outline"
-                    className="w-full gap-2 border-dashed"
+                {/* Add Sub-section Button */}
+                <motion.div
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="pt-2"
                 >
-                    <Plus className="h-4 w-4" />
-                    Add Another Sub-section
-                </Button>
-            </motion.div>
-        </div>
+                    <Button
+                        onClick={handleAddSubSection}
+                        variant="outline"
+                        className="w-full gap-2 border-dashed"
+                    >
+                        <Plus className="h-4 w-4" />
+                        Add Another Sub-section
+                    </Button>
+                </motion.div>
+            </div>
+
+            {/* Module Editor Modal - SINGLE INSTANCE */}
+            {editingModule && (
+                <ModuleEditor
+                    isOpen={!!editingModule}
+                    onClose={handleCloseModuleEditor}
+                    moduleData={editingModule}
+                    courseId={courseId}
+                />
+            )}
+        </>
     );
 }
 
@@ -466,7 +415,6 @@ function SubSectionItem({
     onToggle,
     onEdit,
     onDelete,
-    onDuplicate,
     onEditModule,
     onDragStart,
     onDragOver,
@@ -475,78 +423,43 @@ function SubSectionItem({
 }) {
     const [showOptions, setShowOptions] = useState(false);
 
-    // Calculate module stats
     const moduleStats = {
         total: subSection.modules?.length || 0,
         video: subSection.modules?.filter(m => m.type === 'video').length || 0,
         text: subSection.modules?.filter(m => m.type === 'text').length || 0,
         quiz: subSection.modules?.filter(m => m.type === 'quiz').length || 0
     };
-    const handleEditModule = useCallback((moduleOrWrapper) => {
-        console.log("🔍 handleEditModule called with:", moduleOrWrapper);
 
-        // The actual module might be in moduleOrWrapper.module or might be moduleOrWrapper itself
-        const actualModule = moduleOrWrapper.module ? moduleOrWrapper.module : moduleOrWrapper;
-
-        console.log("📋 Actual module:", actualModule);
-        console.log("📋 Module content:", actualModule.content);
-
+    const handleEditModuleClick = useCallback((moduleData) => {
+        console.log("SubSectionItem: Edit module clicked:", moduleData);
         if (onEditModule) {
-            onEditModule({
-                sectionId,
-                subSectionId: subSection.id,
-                module: actualModule,
-                isNew: false
-            });
+            onEditModule(moduleData);
         }
-    }, [sectionId, subSection.id, onEditModule]);
+    }, [onEditModule]);
 
-    // Handle adding a new module
     const handleAddModule = useCallback((type) => {
         console.log(`Adding new module of type: ${type}`);
 
         if (onEditModule) {
-            // Create properly structured module data with all required fields
             const moduleData = {
                 id: Date.now().toString(),
                 title: "",
                 type,
-                content: "",
+                content: type === 'video' ? "" : "",
                 description: "",
                 duration: type === 'video' ? "15 min" : type === 'quiz' ? "10 min" : "5 min",
-                isActive: true,
-                videoUrl: type === 'video' ? "" : undefined,
-                transcript: "",
-                attachments: [],
-                tags: [],
-                objectives: [],
                 order: 0,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
+                quizData: type === 'quiz' ? [] : undefined
             };
-
-            // Add quiz questions for quiz type
-            if (type === 'quiz') {
-                moduleData.quizQuestions = [];
-            }
-
-            console.log("New module data:", moduleData);
 
             onEditModule({
                 sectionId,
                 subSectionId: subSection.id,
                 module: moduleData,
-                isNew: true,
-                _debug: {
-                    timestamp: new Date().toISOString(),
-                    isNew: true,
-                    path: `courses/${courseId}/sections/${sectionId}/subSections/${subSection.id}/modules/${moduleData.id}`
-                }
+                isNew: true
             });
-        } else {
-            console.error("onEditModule prop is not provided to SubSectionItem");
         }
-    }, [sectionId, subSection.id, courseId, onEditModule]);
+    }, [sectionId, subSection.id, onEditModule]);
 
     return (
         <motion.div
@@ -576,7 +489,6 @@ function SubSectionItem({
                 onClick={onToggle}
             >
                 <div className="flex items-center gap-3 flex-1">
-                    {/* Drag Handle */}
                     <div
                         className="cursor-move opacity-60 hover:opacity-100 transition-opacity"
                         draggable
@@ -609,11 +521,6 @@ function SubSectionItem({
                             <span className="text-xs px-1.5 py-0.5 bg-primary/10 text-primary rounded flex-shrink-0">
                                 #{index + 1}
                             </span>
-                            {!subSection.isActive && (
-                                <span className="text-xs px-1.5 py-0.5 bg-yellow-100 text-yellow-800 rounded flex-shrink-0">
-                                    Draft
-                                </span>
-                            )}
                         </div>
 
                         <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -640,17 +547,10 @@ function SubSectionItem({
                                     </div>
                                 </>
                             )}
-
-                            {subSection.createdAt && (
-                                <span className="text-xs opacity-70 ml-auto">
-                                    {formatRelativeDate(subSection.createdAt)}
-                                </span>
-                            )}
                         </div>
                     </div>
                 </div>
 
-                {/* Action Buttons */}
                 <div
                     className="flex items-center gap-1"
                     onClick={(e) => e.stopPropagation()}
@@ -677,52 +577,34 @@ function SubSectionItem({
                                     initial={{ opacity: 0, scale: 0.9, y: -10 }}
                                     animate={{ opacity: 1, scale: 1, y: 0 }}
                                     exit={{ opacity: 0, scale: 0.9, y: -10 }}
-                                    className="absolute right-0 top-full mt-1 w-56 bg-popover border rounded-lg shadow-lg z-10"
+                                    className="absolute right-0 top-full mt-1 w-48 bg-popover border rounded-lg shadow-lg z-10"
                                     onClick={(e) => e.stopPropagation()}
                                 >
                                     <div className="p-2 space-y-1">
-                                        {onEdit && (
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => {
-                                                    onEdit();
-                                                    setShowOptions(false);
-                                                }}
-                                                className="w-full justify-start gap-2 h-9"
-                                            >
-                                                <Edit2 className="h-4 w-4" />
-                                                Edit Sub-section
-                                            </Button>
-                                        )}
-                                        {onDuplicate && (
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => {
-                                                    onDuplicate();
-                                                    setShowOptions(false);
-                                                }}
-                                                className="w-full justify-start gap-2 h-9"
-                                            >
-                                                <Copy className="h-4 w-4" />
-                                                Duplicate
-                                            </Button>
-                                        )}
-                                        {onDelete && (
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => {
-                                                    onDelete();
-                                                    setShowOptions(false);
-                                                }}
-                                                className="w-full justify-start gap-2 h-9 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                                Delete
-                                            </Button>
-                                        )}
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                                onEdit?.();
+                                                setShowOptions(false);
+                                            }}
+                                            className="w-full justify-start gap-2 h-8"
+                                        >
+                                            <Edit2 className="h-3 w-3" />
+                                            Edit
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                                onDelete?.();
+                                                setShowOptions(false);
+                                            }}
+                                            className="w-full justify-start gap-2 h-8 text-destructive hover:text-destructive"
+                                        >
+                                            <Trash2 className="h-3 w-3" />
+                                            Delete
+                                        </Button>
                                     </div>
                                 </motion.div>
                             )}
@@ -731,7 +613,7 @@ function SubSectionItem({
                 </div>
             </div>
 
-            {/* Sub-section Content (Collapsible) */}
+            {/* Sub-section Content */}
             <AnimatePresence>
                 {isExpanded && (
                     <motion.div
@@ -742,28 +624,6 @@ function SubSectionItem({
                     >
                         <Card className="border-0 rounded-none shadow-none">
                             <CardContent className="p-4 space-y-4">
-                                {/* Sub-section Description */}
-                                {subSection.description && (
-                                    <div className="p-3 bg-muted/30 rounded-lg">
-                                        <p className="text-sm text-muted-foreground">{subSection.description}</p>
-                                    </div>
-                                )}
-
-                                {/* Learning Objectives */}
-                                {subSection.objectives && subSection.objectives.length > 0 && (
-                                    <div className="space-y-2">
-                                        <h5 className="text-sm font-medium">Learning Objectives</h5>
-                                        <ul className="space-y-1">
-                                            {subSection.objectives.map((objective, idx) => (
-                                                <li key={idx} className="flex items-start gap-2 text-sm">
-                                                    <div className="h-1.5 w-1.5 rounded-full bg-primary mt-2 flex-shrink-0"></div>
-                                                    <span>{objective}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                )}
-
                                 {/* Module List */}
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
@@ -779,7 +639,7 @@ function SubSectionItem({
                                         sectionId={sectionId}
                                         subSectionId={subSection.id}
                                         courseId={courseId}
-                                        onEditModule={handleEditModule}
+                                        onEditModule={handleEditModuleClick}
                                     />
                                 </div>
 
@@ -793,23 +653,6 @@ function SubSectionItem({
                                         compact
                                     />
                                 </div>
-
-                                {/* Metadata */}
-                                <div className="pt-3 border-t text-xs text-muted-foreground">
-                                    <div className="flex items-center gap-4">
-                                        {subSection.createdAt && (
-                                            <div className="flex items-center gap-1">
-                                                <Clock className="h-3 w-3" />
-                                                <span>Created: {formatDate(subSection.createdAt)}</span>
-                                            </div>
-                                        )}
-                                        {subSection.updatedAt && subSection.createdAt !== subSection.updatedAt && (
-                                            <div className="flex items-center gap-1">
-                                                <span>Updated: {formatDate(subSection.updatedAt)}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
                             </CardContent>
                         </Card>
                     </motion.div>
@@ -819,59 +662,8 @@ function SubSectionItem({
     );
 }
 
-// Helper function to parse duration string to minutes
 function parseDuration(durationString) {
     if (!durationString) return 60;
-
-    const match = durationString.match(/(\d+)\s*(min|minutes|hour|hours|h|m)/i);
-    if (!match) return 60;
-
-    const value = parseInt(match[1]);
-    const unit = match[2].toLowerCase();
-
-    if (unit.includes('hour') || unit === 'h') {
-        return value * 60;
-    }
-    return value; // minutes
-}
-
-// Helper Functions
-function formatRelativeDate(dateString) {
-    if (!dateString) return '';
-
-    try {
-        const date = new Date(dateString);
-        const now = new Date();
-        const diffMs = now - date;
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-        if (diffDays === 0) return 'today';
-        if (diffDays === 1) return 'yesterday';
-        if (diffDays < 7) return `${diffDays} days ago`;
-        if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-
-        return date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric'
-        });
-    } catch (error) {
-        console.error('Error formatting date:', error);
-        return '';
-    }
-}
-
-function formatDate(dateString) {
-    if (!dateString) return '';
-
-    try {
-        const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-        });
-    } catch (error) {
-        console.error('Error formatting date:', error);
-        return '';
-    }
+    const match = durationString.match(/(\d+)/);
+    return match ? parseInt(match[1]) : 60;
 }

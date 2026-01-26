@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { db } from "../../lib/firebase";
 import { collection, getDocs, deleteDoc, doc, updateDoc, query, where, limit, startAfter, getDoc } from "firebase/firestore";
 import {
@@ -11,10 +11,10 @@ import {
 } from "../../components/ui/table";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Trash2, Ban, CheckCircle, Users, GraduationCap, Eye, ArrowUpCircle, X, Search, Building2, Shield, UserCheck, MapPin, Mail, Clock, UserCog, EyeOff } from "lucide-react";
+import { Trash2, Ban, CheckCircle, Users, GraduationCap, Eye, ArrowUpCircle, X, Search, Building2, Shield, UserCheck, MapPin, Mail, Clock, UserCog, EyeOff, UserPlus } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../contexts/AuthContext";
-import { ROLES, getRoleDisplayName, getRoleDescription, calculateGuestAccessExpiry, isGuestAccessExpired } from "../../lib/rbac";
+import { ROLES, getRoleDisplayName, getRoleDescription, calculateGuestAccessExpiry, isGuestAccessExpired, PERMISSIONS } from "../../lib/rbac";
 import { logRoleChange, logSuspensionChange, logPermissionChange, logGuestAccessRevoked } from "../../lib/auditLog";
 
 export default function AdminUsers() {
@@ -27,9 +27,11 @@ export default function AdminUsers() {
     const [selectedUserInstitution, setSelectedUserInstitution] = useState(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [openDropdown, setOpenDropdown] = useState(null);
+    const [dropdownPosition, setDropdownPosition] = useState({ top: 0, bottom: 0 });
     const [lastDoc, setLastDoc] = useState(null);
     const [hasMore, setHasMore] = useState(true);
     const [isFetchingMore, setIsFetchingMore] = useState(false);
+    const dropdownRefs = useRef({});
     const USERS_PER_PAGE = 20;
 
     // Modal states
@@ -222,6 +224,7 @@ export default function AdminUsers() {
         const roleNames = {
             [ROLES.STUDENT]: "Student",
             [ROLES.PARTNER_INSTRUCTOR]: "Partner Instructor",
+            [ROLES.MENTOR]: "Mentor",
             [ROLES.GUEST]: "Guest",
             [ROLES.INSTRUCTOR]: "Instructor"
         };
@@ -243,16 +246,16 @@ export default function AdminUsers() {
                 updateData.guestAccessExpiry = calculateGuestAccessExpiry();
                 // Set default guest permissions
                 updateData.permissions = {
-                    view_all_students_institution: true,
-                    view_all_instructors_institution: true,
-                    manage_student_assignments: true,
-                    create_institution_assessments: true,
-                    preview_all_courses: true,
-                    create_institution_announcements: true,
-                    view_institution_analytics: true,
-                    view_courses: true,
-                    view_course_content: true,
-                    send_messages: true
+                    [PERMISSIONS.VIEW_ALL_STUDENTS_INSTITUTION]: true,
+                    [PERMISSIONS.VIEW_ALL_INSTRUCTORS_INSTITUTION]: true,
+                    [PERMISSIONS.MANAGE_STUDENT_ASSIGNMENTS]: true,
+                    [PERMISSIONS.CREATE_INSTITUTION_ASSESSMENTS]: true,
+                    [PERMISSIONS.PREVIEW_ALL_COURSES]: true,
+                    [PERMISSIONS.CREATE_INSTITUTION_ANNOUNCEMENTS]: true,
+                    [PERMISSIONS.VIEW_INSTITUTION_ANALYTICS]: true,
+                    [PERMISSIONS.VIEW_COURSES]: true,
+                    [PERMISSIONS.VIEW_COURSE_CONTENT]: true,
+                    [PERMISSIONS.SEND_MESSAGES]: true
                 };
 
                 // Require institution assignment for guests
@@ -270,13 +273,13 @@ export default function AdminUsers() {
             if (newRole === ROLES.PARTNER_INSTRUCTOR) {
                 // Set default partner instructor permissions
                 updateData.permissions = {
-                    view_assigned_courses: true,
-                    view_assigned_students: true,
-                    grade_assigned_assessments: true,
-                    provide_feedback: true,
-                    send_messages: true,
-                    create_announcements: true,
-                    view_course_content: true
+                    [PERMISSIONS.VIEW_ASSIGNED_COURSES]: true,
+                    [PERMISSIONS.VIEW_ASSIGNED_STUDENTS_COUNT]: true,
+                    [PERMISSIONS.GRADE_ASSIGNED_ASSESSMENTS]: true,
+                    [PERMISSIONS.PROVIDE_FEEDBACK]: true,
+                    [PERMISSIONS.SEND_MESSAGES]: true,
+                    [PERMISSIONS.CREATE_ANNOUNCEMENTS]: true,
+                    [PERMISSIONS.VIEW_COURSE_CONTENT]: true
                 };
 
                 // If user already has an institutionId, keep it
@@ -285,6 +288,34 @@ export default function AdminUsers() {
                 }
             } else if (oldRole === ROLES.PARTNER_INSTRUCTOR && newRole !== ROLES.PARTNER_INSTRUCTOR) {
                 // Clear permissions and institutionId when leaving partner instructor role
+                updateData.permissions = null;
+                updateData.institutionId = null;
+            }
+
+            // Handle mentor role specific setup
+            if (newRole === ROLES.MENTOR) {
+                // Set default mentor permissions
+                updateData.permissions = {
+                    [PERMISSIONS.VIEW_COURSES]: true,
+                    [PERMISSIONS.VIEW_COURSE_CONTENT]: true,
+                    [PERMISSIONS.VIEW_ASSIGNED_COURSES]: true,
+                    [PERMISSIONS.GRADE_ASSIGNED_ASSESSMENTS]: true,
+                    [PERMISSIONS.PROVIDE_FEEDBACK]: true,
+                    [PERMISSIONS.SEND_MESSAGES]: true,
+                    [PERMISSIONS.CREATE_ANNOUNCEMENTS]: true,
+                    [PERMISSIONS.VIEW_ASSIGNED_STUDENTS]: true,
+                    [PERMISSIONS.CREATE_PARTNER_INSTRUCTORS]: true,
+                    [PERMISSIONS.ASSIGN_STUDENTS]: true,
+                    [PERMISSIONS.ASSIGN_COURSES]: true,
+                    [PERMISSIONS.MANAGE_PARTNER_INSTRUCTORS]: true
+                };
+
+                // If user already has an institutionId, keep it
+                if (!targetUser.institutionId) {
+                    updateData.institutionId = null;
+                }
+            } else if (oldRole === ROLES.MENTOR && newRole !== ROLES.MENTOR) {
+                // Clear permissions and institutionId when leaving mentor role
                 updateData.permissions = null;
                 updateData.institutionId = null;
             }
@@ -303,7 +334,7 @@ export default function AdminUsers() {
             );
 
             // Log permission change if applicable
-            if (newRole === ROLES.PARTNER_INSTRUCTOR || newRole === ROLES.GUEST) {
+            if (newRole === ROLES.PARTNER_INSTRUCTOR || newRole === ROLES.GUEST || newRole === ROLES.MENTOR) {
                 await logPermissionChange(
                     user.uid,
                     userData.email,
@@ -335,26 +366,41 @@ export default function AdminUsers() {
         let defaultPermissions = {};
         if (targetUser.role === ROLES.PARTNER_INSTRUCTOR) {
             defaultPermissions = {
-                view_assigned_courses: true,
-                view_assigned_students: true,
-                grade_assigned_assessments: true,
-                provide_feedback: true,
-                send_messages: true,
-                create_announcements: true,
-                view_course_content: true
+                [PERMISSIONS.VIEW_ASSIGNED_COURSES]: true,
+                [PERMISSIONS.VIEW_ASSIGNED_STUDENTS_COUNT]: true,
+                [PERMISSIONS.GRADE_ASSIGNED_ASSESSMENTS]: true,
+                [PERMISSIONS.PROVIDE_FEEDBACK]: true,
+                [PERMISSIONS.SEND_MESSAGES]: true,
+                [PERMISSIONS.CREATE_ANNOUNCEMENTS]: true,
+                [PERMISSIONS.VIEW_COURSE_CONTENT]: true
+            };
+        } else if (targetUser.role === ROLES.MENTOR) {
+            defaultPermissions = {
+                [PERMISSIONS.VIEW_COURSES]: true,
+                [PERMISSIONS.VIEW_COURSE_CONTENT]: true,
+                [PERMISSIONS.VIEW_ASSIGNED_COURSES]: true,
+                [PERMISSIONS.GRADE_ASSIGNED_ASSESSMENTS]: true,
+                [PERMISSIONS.PROVIDE_FEEDBACK]: true,
+                [PERMISSIONS.SEND_MESSAGES]: true,
+                [PERMISSIONS.CREATE_ANNOUNCEMENTS]: true,
+                [PERMISSIONS.VIEW_ASSIGNED_STUDENTS]: true,
+                [PERMISSIONS.CREATE_PARTNER_INSTRUCTORS]: true,
+                [PERMISSIONS.ASSIGN_STUDENTS]: true,
+                [PERMISSIONS.ASSIGN_COURSES]: true,
+                [PERMISSIONS.MANAGE_PARTNER_INSTRUCTORS]: true
             };
         } else if (targetUser.role === ROLES.GUEST) {
             defaultPermissions = {
-                view_all_students_institution: true,
-                view_all_instructors_institution: true,
-                manage_student_assignments: true,
-                create_institution_assessments: true,
-                preview_all_courses: true,
-                create_institution_announcements: true,
-                view_institution_analytics: true,
-                view_courses: true,
-                view_course_content: true,
-                send_messages: true
+                [PERMISSIONS.VIEW_ALL_STUDENTS_INSTITUTION]: true,
+                [PERMISSIONS.VIEW_ALL_INSTRUCTORS_INSTITUTION]: true,
+                [PERMISSIONS.MANAGE_STUDENT_ASSIGNMENTS]: true,
+                [PERMISSIONS.CREATE_INSTITUTION_ASSESSMENTS]: true,
+                [PERMISSIONS.PREVIEW_ALL_COURSES]: true,
+                [PERMISSIONS.CREATE_INSTITUTION_ANNOUNCEMENTS]: true,
+                [PERMISSIONS.VIEW_INSTITUTION_ANALYTICS]: true,
+                [PERMISSIONS.VIEW_COURSES]: true,
+                [PERMISSIONS.VIEW_COURSE_CONTENT]: true,
+                [PERMISSIONS.SEND_MESSAGES]: true
             };
         }
 
@@ -490,6 +536,27 @@ export default function AdminUsers() {
         }
     };
 
+    // Handle dropdown toggle with position calculation
+    const handleDropdownToggle = (userId, event) => {
+        const buttonRect = event.currentTarget.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+
+        // Calculate available space below the button
+        const spaceBelow = viewportHeight - buttonRect.bottom;
+        const spaceAbove = buttonRect.top;
+
+        // Determine if dropdown should open upwards
+        const shouldOpenUpwards = spaceBelow < 300 && spaceAbove > 300;
+
+        setDropdownPosition({
+            top: buttonRect.top,
+            bottom: buttonRect.bottom,
+            shouldOpenUpwards
+        });
+
+        setOpenDropdown(openDropdown === userId ? null : userId);
+    };
+
     // Filter users by search query
     const filteredUsers = users.filter(user => {
         const matchesSearch = searchQuery === "" ||
@@ -580,6 +647,18 @@ export default function AdminUsers() {
                     Partner Instructors
                 </button>
                 <button
+                    onClick={() => setActiveTab(ROLES.MENTOR)}
+                    className={cn(
+                        "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all",
+                        activeTab === ROLES.MENTOR
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground hover:bg-background/50"
+                    )}
+                >
+                    <UserPlus className="h-4 w-4" />
+                    Mentors
+                </button>
+                <button
                     onClick={() => setActiveTab(ROLES.GUEST)}
                     className={cn(
                         "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all",
@@ -624,7 +703,7 @@ export default function AdminUsers() {
                                     <TableHead>Email</TableHead>
                                     <TableHead>Role</TableHead>
                                     <TableHead>Status</TableHead>
-                                    {(activeTab === ROLES.PARTNER_INSTRUCTOR || activeTab === ROLES.GUEST) && <TableHead>Institution</TableHead>}
+                                    {(activeTab === ROLES.PARTNER_INSTRUCTOR || activeTab === ROLES.MENTOR || activeTab === ROLES.GUEST) && <TableHead>Institution</TableHead>}
                                     {activeTab === ROLES.GUEST && <TableHead>Access Expiry</TableHead>}
                                     <TableHead className="w-32">Actions</TableHead>
                                 </TableRow>
@@ -632,7 +711,7 @@ export default function AdminUsers() {
                             <TableBody>
                                 {filteredUsers.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={activeTab === ROLES.GUEST ? 7 : (activeTab === ROLES.PARTNER_INSTRUCTOR ? 6 : 5)} className="text-center py-8 text-muted-foreground">
+                                        <TableCell colSpan={activeTab === ROLES.GUEST ? 7 : (activeTab === ROLES.PARTNER_INSTRUCTOR || activeTab === ROLES.MENTOR ? 6 : 5)} className="text-center py-8 text-muted-foreground">
                                             No {getRoleDisplayName(activeTab).toLowerCase()}s found.
                                         </TableCell>
                                     </TableRow>
@@ -665,7 +744,7 @@ export default function AdminUsers() {
                                                     }
                                                 </span>
                                             </TableCell>
-                                            {(activeTab === ROLES.PARTNER_INSTRUCTOR || activeTab === ROLES.GUEST) && (
+                                            {(activeTab === ROLES.PARTNER_INSTRUCTOR || activeTab === ROLES.MENTOR || activeTab === ROLES.GUEST) && (
                                                 <TableCell>
                                                     <div className="flex items-center gap-2">
                                                         <Building2 className="h-3 w-3 text-muted-foreground" />
@@ -693,7 +772,7 @@ export default function AdminUsers() {
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        onClick={() => setOpenDropdown(openDropdown === targetUser.id ? null : targetUser.id)}
+                                                        onClick={(e) => handleDropdownToggle(targetUser.id, e)}
                                                         className="h-8 w-8"
                                                     >
                                                         <svg
@@ -706,10 +785,24 @@ export default function AdminUsers() {
                                                     </Button>
 
                                                     {openDropdown === targetUser.id && (
-                                                        <div className={`absolute right-0 z-50 w-72 rounded-lg bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden ${index >= filteredUsers.length - 3 && filteredUsers.length > 4
-                                                            ? "bottom-full mb-2 origin-bottom-right"
-                                                            : "mt-2 origin-top-right"
-                                                            }`}>
+                                                        <div
+                                                            className={`absolute right-0 z-50 w-72 rounded-lg bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden ${dropdownPosition.shouldOpenUpwards
+                                                                ? 'bottom-full mb-2 origin-bottom-right'
+                                                                : 'mt-2 origin-top-right'
+                                                                }`}
+                                                            style={{
+                                                                position: 'fixed',
+                                                                top: dropdownPosition.shouldOpenUpwards
+                                                                    ? 'auto'
+                                                                    : `${dropdownPosition.bottom}px`,
+                                                                bottom: dropdownPosition.shouldOpenUpwards
+                                                                    ? `${window.innerHeight - dropdownPosition.top}px`
+                                                                    : 'auto',
+                                                                right: '16px',
+                                                                maxHeight: 'calc(100vh - 100px)',
+                                                                overflowY: 'auto'
+                                                            }}
+                                                        >
                                                             <div className="py-2" role="menu">
                                                                 {/* View Details */}
                                                                 <button
@@ -735,6 +828,16 @@ export default function AdminUsers() {
                                                                         >
                                                                             <UserCheck className="h-4 w-4" />
                                                                             <span className="font-medium">Make Partner Instructor</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.MENTOR);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950 transition-colors"
+                                                                        >
+                                                                            <UserPlus className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Mentor</span>
                                                                         </button>
                                                                         <button
                                                                             onClick={() => {
@@ -770,6 +873,61 @@ export default function AdminUsers() {
                                                                         >
                                                                             <Shield className="h-4 w-4" />
                                                                             <span className="font-medium">Manage Permissions</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.MENTOR);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950 transition-colors"
+                                                                        >
+                                                                            <UserPlus className="h-4 w-4" />
+                                                                            <span className="font-medium">Promote to Mentor</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.GUEST);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
+                                                                        >
+                                                                            <UserCog className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Guest</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.INSTRUCTOR);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 transition-colors"
+                                                                        >
+                                                                            <ArrowUpCircle className="h-4 w-4" />
+                                                                            <span className="font-medium">Promote to Instructor</span>
+                                                                        </button>
+                                                                    </>
+                                                                )}
+
+                                                                {targetUser.role === ROLES.MENTOR && (
+                                                                    <>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenPermissionModal(targetUser);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
+                                                                        >
+                                                                            <Shield className="h-4 w-4" />
+                                                                            <span className="font-medium">Manage Permissions</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.PARTNER_INSTRUCTOR);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors"
+                                                                        >
+                                                                            <UserCheck className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Partner Instructor</span>
                                                                         </button>
                                                                         <button
                                                                             onClick={() => {
@@ -840,10 +998,20 @@ export default function AdminUsers() {
                                                                             <UserCheck className="h-4 w-4" />
                                                                             <span className="font-medium">Make Partner Instructor</span>
                                                                         </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.MENTOR);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950 transition-colors"
+                                                                        >
+                                                                            <UserPlus className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Mentor</span>
+                                                                        </button>
                                                                     </>
                                                                 )}
 
-                                                                {targetUser.role === ROLES.INSTRUCTOR && targetUser.role !== ROLES.PARTNER_INSTRUCTOR && (
+                                                                {targetUser.role === ROLES.INSTRUCTOR && targetUser.role !== ROLES.PARTNER_INSTRUCTOR && targetUser.role !== ROLES.MENTOR && (
                                                                     <>
                                                                         <button
                                                                             onClick={() => {
@@ -854,6 +1022,16 @@ export default function AdminUsers() {
                                                                         >
                                                                             <UserCheck className="h-4 w-4" />
                                                                             <span className="font-medium">Make Partner Instructor</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                handleOpenRoleModal(targetUser, ROLES.MENTOR);
+                                                                                setOpenDropdown(null);
+                                                                            }}
+                                                                            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950 transition-colors"
+                                                                        >
+                                                                            <UserPlus className="h-4 w-4" />
+                                                                            <span className="font-medium">Make Mentor</span>
                                                                         </button>
                                                                         <button
                                                                             onClick={() => {
@@ -996,7 +1174,7 @@ export default function AdminUsers() {
                             </div>
 
                             {/* Institution Details */}
-                            {(selectedUser.role === ROLES.PARTNER_INSTRUCTOR || selectedUser.role === ROLES.GUEST || selectedUser.institutionId) && (
+                            {(selectedUser.role === ROLES.PARTNER_INSTRUCTOR || selectedUser.role === ROLES.MENTOR || selectedUser.role === ROLES.GUEST || selectedUser.institutionId) && (
                                 <div>
                                     <label className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                                         <Building2 className="h-4 w-4" />
@@ -1025,7 +1203,7 @@ export default function AdminUsers() {
                                 </div>
                             )}
 
-                            {(selectedUser.role === ROLES.PARTNER_INSTRUCTOR || selectedUser.role === ROLES.GUEST) && selectedUser.permissions && (
+                            {(selectedUser.role === ROLES.PARTNER_INSTRUCTOR || selectedUser.role === ROLES.MENTOR || selectedUser.role === ROLES.GUEST) && selectedUser.permissions && (
                                 <div>
                                     <label className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                                         <Shield className="h-4 w-4" />
@@ -1106,7 +1284,7 @@ export default function AdminUsers() {
                             <div>
                                 <label className="block text-sm font-medium mb-2">Change to:</label>
                                 <div className="space-y-2">
-                                    {[ROLES.PARTNER_INSTRUCTOR, ROLES.GUEST, ROLES.INSTRUCTOR, ROLES.STUDENT].map(role => (
+                                    {[ROLES.PARTNER_INSTRUCTOR, ROLES.MENTOR, ROLES.GUEST, ROLES.INSTRUCTOR, ROLES.STUDENT].map(role => (
                                         role !== roleModalData.targetUser?.role && (
                                             <button
                                                 key={role}
@@ -1167,13 +1345,47 @@ export default function AdminUsers() {
                                 {permissionData.role === ROLES.PARTNER_INSTRUCTOR ? (
                                     // Partner Instructor Permissions
                                     [
-                                        'view_assigned_courses',
-                                        'view_assigned_students',
-                                        'grade_assigned_assessments',
-                                        'provide_feedback',
-                                        'send_messages',
-                                        'create_announcements',
-                                        'view_course_content'
+                                        PERMISSIONS.VIEW_ASSIGNED_COURSES,
+                                        PERMISSIONS.VIEW_ASSIGNED_STUDENTS_COUNT,
+                                        PERMISSIONS.GRADE_ASSIGNED_ASSESSMENTS,
+                                        PERMISSIONS.PROVIDE_FEEDBACK,
+                                        PERMISSIONS.SEND_MESSAGES,
+                                        PERMISSIONS.CREATE_ANNOUNCEMENTS,
+                                        PERMISSIONS.VIEW_COURSE_CONTENT
+                                    ].map(permission => (
+                                        <label key={permission} className="flex items-center justify-between p-3 rounded-md border border-input hover:bg-accent transition-colors">
+                                            <div>
+                                                <span className="font-medium capitalize">{permission.replace(/_/g, ' ')}</span>
+                                            </div>
+                                            <input
+                                                type="checkbox"
+                                                checked={permissionData.permissions[permission] || false}
+                                                onChange={(e) => setPermissionData({
+                                                    ...permissionData,
+                                                    permissions: {
+                                                        ...permissionData.permissions,
+                                                        [permission]: e.target.checked
+                                                    }
+                                                })}
+                                                className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                                            />
+                                        </label>
+                                    ))
+                                ) : permissionData.role === ROLES.MENTOR ? (
+                                    // Mentor Permissions
+                                    [
+                                        PERMISSIONS.VIEW_COURSES,
+                                        PERMISSIONS.VIEW_COURSE_CONTENT,
+                                        PERMISSIONS.VIEW_ASSIGNED_COURSES,
+                                        PERMISSIONS.GRADE_ASSIGNED_ASSESSMENTS,
+                                        PERMISSIONS.PROVIDE_FEEDBACK,
+                                        PERMISSIONS.SEND_MESSAGES,
+                                        PERMISSIONS.CREATE_ANNOUNCEMENTS,
+                                        PERMISSIONS.VIEW_ASSIGNED_STUDENTS,
+                                        PERMISSIONS.CREATE_PARTNER_INSTRUCTORS,
+                                        PERMISSIONS.ASSIGN_STUDENTS,
+                                        PERMISSIONS.ASSIGN_COURSES,
+                                        PERMISSIONS.MANAGE_PARTNER_INSTRUCTORS
                                     ].map(permission => (
                                         <label key={permission} className="flex items-center justify-between p-3 rounded-md border border-input hover:bg-accent transition-colors">
                                             <div>
@@ -1196,21 +1408,21 @@ export default function AdminUsers() {
                                 ) : permissionData.role === ROLES.GUEST ? (
                                     // Guest Permissions
                                     [
-                                        'view_all_students_institution',
-                                        'view_all_instructors_institution',
-                                        'manage_student_assignments',
-                                        'create_institution_assessments',
-                                        'preview_all_courses',
-                                        'create_institution_announcements',
-                                        'view_institution_analytics',
-                                        'view_courses',
-                                        'view_course_content',
-                                        'send_messages'
+                                        PERMISSIONS.VIEW_ALL_STUDENTS_INSTITUTION,
+                                        PERMISSIONS.VIEW_ALL_INSTRUCTORS_INSTITUTION,
+                                        PERMISSIONS.MANAGE_STUDENT_ASSIGNMENTS,
+                                        PERMISSIONS.CREATE_INSTITUTION_ASSESSMENTS,
+                                        PERMISSIONS.PREVIEW_ALL_COURSES,
+                                        PERMISSIONS.CREATE_INSTITUTION_ANNOUNCEMENTS,
+                                        PERMISSIONS.VIEW_INSTITUTION_ANALYTICS,
+                                        PERMISSIONS.VIEW_COURSES,
+                                        PERMISSIONS.VIEW_COURSE_CONTENT,
+                                        PERMISSIONS.SEND_MESSAGES
                                     ].map(permission => (
                                         <label key={permission} className="flex items-center justify-between p-3 rounded-md border border-input hover:bg-accent transition-colors">
                                             <div>
                                                 <span className="font-medium capitalize">{permission.replace(/_/g, ' ')}</span>
-                                                {permission === 'preview_all_courses' && (
+                                                {permission === PERMISSIONS.PREVIEW_ALL_COURSES && (
                                                     <p className="text-xs text-muted-foreground mt-1">Includes HTML content in modules</p>
                                                 )}
                                             </div>
@@ -1276,7 +1488,7 @@ export default function AdminUsers() {
                                 <p className="text-sm text-yellow-800 dark:text-yellow-200">
                                     {guestAccessData.action === 'revoke'
                                         ? 'This will immediately revoke the guest access. The user will no longer be able to use guest features.'
-                                        : `This will extend the guest access by ${process.env.REACT_APP_GUEST_ACCESS_DURATION_HOURS || 48} hours from now.`
+                                        : `This will extend the guest access by ${import.meta.env.VITE_GUEST_ACCESS_DURATION_HOURS || 48} hours from now.`
                                     }
                                 </p>
                             </div>

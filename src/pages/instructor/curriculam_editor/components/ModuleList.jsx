@@ -1,7 +1,11 @@
+import { useState, useContext } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Video, FileText, HelpCircle, Trash2, Edit2, Clock, BarChart } from "lucide-react";
+import { Video, FileText, HelpCircle, Trash2, Edit2, Clock } from "lucide-react";
 import { Button } from "../../../../components/ui/button";
 import { deleteModule } from "../../../../services/moduleService";
+import { ModalContext } from "../../../../contexts/ModalContext";
+import { useToast } from "../../../../contexts/ToastComponent";
+import ModuleEditor from "./ModuleEditor"; // Add this import
 
 export default function ModuleList({
     modules,
@@ -9,8 +13,14 @@ export default function ModuleList({
     subSectionId,
     courseId,
     onEditModule,
-    onDeleteModule
+    onDeleteModule,
+    onRefresh,
+    onModuleSaved // Add this prop to refresh parent
 }) {
+    const { showConfirmModal } = useContext(ModalContext);
+    const { toast } = useToast();
+    const [editingModule, setEditingModule] = useState(null);
+
     if (!modules || modules.length === 0) {
         return (
             <motion.div
@@ -29,44 +39,100 @@ export default function ModuleList({
         );
     }
 
+    const handleEditModule = (moduleData) => {
+        console.log("ModuleList: Opening module editor:", moduleData);
+        setEditingModule(moduleData);
+    };
+
+    const handleModuleSaved = () => {
+        setEditingModule(null);
+        if (onModuleSaved) {
+            onModuleSaved();
+        }
+        toast({
+            title: "Success",
+            description: "Module saved successfully",
+            variant: "default",
+        });
+    };
+
+    const handleDelete = async (moduleId, moduleTitle) => {
+        const confirmed = await showConfirmModal({
+            title: "Delete Module",
+            message: `Are you sure you want to delete "${moduleTitle}"? This action cannot be undone.`,
+            confirmText: "Delete",
+            cancelText: "Cancel",
+            variant: "destructive"
+        });
+
+        if (confirmed) {
+            try {
+                await deleteModule(courseId, sectionId, subSectionId, moduleId);
+                if (onDeleteModule) onDeleteModule(moduleId);
+                toast({
+                    title: "Success",
+                    description: "Module deleted successfully",
+                    variant: "default",
+                });
+                if (onRefresh) onRefresh();
+            } catch (error) {
+                console.error("Error deleting module:", error);
+                toast({
+                    title: "Error",
+                    description: "Failed to delete module",
+                    variant: "destructive",
+                });
+            }
+        }
+    };
+
     return (
-        <div className="space-y-2">
-            <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-semibold text-muted-foreground">
-                    Modules ({modules.length})
-                </h4>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    <span>
-                        {calculateTotalDuration(modules)} total
-                    </span>
+        <>
+            <div className="space-y-2">
+                <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-muted-foreground">
+                        Modules ({modules.length})
+                    </h4>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        <span>
+                            {calculateTotalDuration(modules)} total
+                        </span>
+                    </div>
                 </div>
+
+                <AnimatePresence>
+                    {modules.map((module, index) => (
+                        <ModuleItem
+                            key={module.id || index}
+                            module={module}
+                            index={index}
+                            onEdit={() => handleEditModule({
+                                sectionId,
+                                subSectionId,
+                                module,
+                                isNew: false
+                            })}
+                            onDelete={() => handleDelete(module.id, module.title)}
+                        />
+                    ))}
+                </AnimatePresence>
             </div>
 
-            <AnimatePresence>
-                {modules.map((module, index) => (
-                    <ModuleItem
-                        key={module.id || index}
-                        module={module}
-                        index={index}
-                        sectionId={sectionId}
-                        subSectionId={subSectionId}
-                        courseId={courseId}
-                        onEdit={() => onEditModule({
-                            sectionId,
-                            subSectionId,
-                            module,
-                            isNew: false
-                        })}
-                        onDelete={onDeleteModule}
-                    />
-                ))}
-            </AnimatePresence>
-        </div>
+            {/* Module Editor Modal */}
+            {editingModule && (
+                <ModuleEditor
+                    isOpen={!!editingModule}
+                    onClose={() => setEditingModule(null)}
+                    moduleData={editingModule}
+                    courseId={courseId}
+                />
+            )}
+        </>
     );
 }
 
-function ModuleItem({ module, index, sectionId, subSectionId, courseId, onEdit, onDelete }) {
+function ModuleItem({ module, index, onEdit, onDelete }) {
     const getIcon = (type) => {
         switch (type) {
             case 'video':
@@ -96,16 +162,17 @@ function ModuleItem({ module, index, sectionId, subSectionId, courseId, onEdit, 
         return '20-40 min';
     };
 
-    const handleDelete = async () => {
-        if (window.confirm(`Delete "${module.title}"?`)) {
-            try {
-                await deleteModule(courseId, sectionId, subSectionId, module.id);
-                if (onDelete) onDelete(module.id);
-            } catch (error) {
-                console.error("Error deleting module:", error);
-                alert("Failed to delete module");
-            }
+    const getStats = (module) => {
+        if (module.type === 'quiz') {
+            const questionCount = module.quizData?.length || 0;
+            return `${questionCount} question${questionCount !== 1 ? 's' : ''}`;
+        } else if (module.type === 'text') {
+            const words = module.content?.split(/\s+/).filter(w => w.length > 0).length || 0;
+            return `${words} word${words !== 1 ? 's' : ''}`;
+        } else if (module.type === 'video') {
+            return module.content ? 'Video' : 'No URL';
         }
+        return '';
     };
 
     return (
@@ -138,12 +205,9 @@ function ModuleItem({ module, index, sectionId, subSectionId, courseId, onEdit, 
                                 <span>{getDuration(module)}</span>
                             </div>
 
-                            {module.type === 'quiz' && module.quizData && (
-                                <div className="flex items-center gap-1">
-                                    <BarChart className="h-3 w-3" />
-                                    <span>{module.quizData.length} questions</span>
-                                </div>
-                            )}
+                            <div className="flex items-center gap-1">
+                                <span>{getStats(module)}</span>
+                            </div>
 
                             <div className="flex-1"></div>
 
@@ -170,7 +234,7 @@ function ModuleItem({ module, index, sectionId, subSectionId, courseId, onEdit, 
                         <Button
                             variant="ghost"
                             size="sm"
-                            onClick={handleDelete}
+                            onClick={onDelete}
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive/90"
                         >
                             <Trash2 className="h-4 w-4" />
@@ -204,20 +268,24 @@ function calculateTotalDuration(modules) {
 function formatDate(dateString) {
     if (!dateString) return 'recently';
 
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    try {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-    if (diffDays === 0) return 'today';
-    if (diffDays === 1) return 'yesterday';
-    if (diffDays < 7) return `${diffDays} days ago`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+        if (diffDays === 0) return 'today';
+        if (diffDays === 1) return 'yesterday';
+        if (diffDays < 7) return `${diffDays} days ago`;
+        if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
 
-    return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric'
-    });
+        return date.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric'
+        });
+    } catch (error) {
+        return 'recently';
+    }
 }
 
 // Module Statistics Component (optional)

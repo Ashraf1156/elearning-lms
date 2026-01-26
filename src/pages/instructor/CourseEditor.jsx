@@ -122,7 +122,7 @@ export default function CourseEditor() {
                     setThumbnailFile={setThumbnailFile}
                 />
 
-                <SecuritySettings course={course} setCourse={setCourse} />
+                {/* <SecuritySettings course={course} setCourse={setCourse} /> */}
 
                 <CourseTeam
                     courseId={courseId}
