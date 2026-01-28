@@ -270,7 +270,7 @@ export const getUserHomeRoute = (userData) => {
         [ROLES.INSTRUCTOR]: '/instructor/analytics',
         [ROLES.PARTNER_INSTRUCTOR]: '/partner-instructor',
         [ROLES.GUEST]: '/guest/dashboard',
-        [ROLES.STUDENT]: '/student/analytics'
+        [ROLES.STUDENT]: '/courses'
     };
 
     return homeRoutes[userData.role] || '/student/dashboard';

@@ -2,16 +2,23 @@ import { useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { db } from "../../lib/firebase";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import {
+    doc,
+    getDoc,
+    collection,
+    query,
+    where,
+    getDocs
+} from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Building2, Users, TrendingUp, Shield, BookOpen, GraduationCap } from "lucide-react";
+import { Building2, Users, TrendingUp, BookOpen } from "lucide-react";
 import PartnerInstructorStudents from "./PartnerInstructorStudents";
-import InstructorCourses from "../instructor/InstructorCourses";
-import CourseEditor from "../instructor/CourseEditor";
-import { PERMISSIONS, getRoleDisplayName } from "../../lib/rbac";
+import PartnerInstructorCourses from "./PartnerInstructorCourses"; // Updated import
+import PartnerCoursePreview from "./PartnerCoursePreview"; // Add this import
+import { PERMISSIONS } from "../../lib/rbac";
 
 export default function PartnerInstructorDashboard() {
-    const { userData, hasPermission } = useAuth();
+    const { userData } = useAuth();
     const [institution, setInstitution] = useState(null);
     const [stats, setStats] = useState({
         totalStudents: 0,
@@ -35,71 +42,124 @@ export default function PartnerInstructorDashboard() {
         }
     };
 
-    // Fetch institution courses
-    const fetchInstitutionCourses = async () => {
+    // Fetch assigned courses for this partner instructor
+    const fetchAssignedCourses = async () => {
         try {
-            if (!userData?.institutionId) return [];
+            if (!userData?.uid) return [];
 
             const q = query(
-                collection(db, "courses"),
-                where("institutionId", "==", userData.institutionId)
+                collection(db, "mentorCourseAssignments"),
+                where("mentorId", "==", userData.uid)
             );
             const snapshot = await getDocs(q);
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+
+            // Get course details for each assignment
+            const courses = [];
+            for (const assignmentDoc of snapshot.docs) {
+                const assignment = assignmentDoc.data();
+                try {
+                    const courseDoc = await getDoc(doc(db, "courses", assignment.courseId));
+                    if (courseDoc.exists()) {
+                        courses.push({
+                            id: courseDoc.id,
+                            ...courseDoc.data()
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Error fetching course ${assignment.courseId}:`, error);
+                }
+            }
+
+            console.log("Assigned courses:", courses.length);
+            return courses;
         } catch (error) {
-            console.error("Error fetching courses:", error);
+            console.error("Error fetching assigned courses:", error);
             return [];
         }
     };
 
-    // Fetch stats with proper institution filtering
-    const fetchStats = async () => {
+    // Fetch assigned students for this partner instructor
+    const fetchAssignedStudents = async () => {
         try {
-            console.log("Partner Dashboard: Fetching stats for institution:", userData?.institutionId);
+            if (!userData?.uid) return [];
 
-            // 1. Get all institution courses
-            const institutionCourses = await fetchInstitutionCourses();
-            console.log("Institution courses:", institutionCourses.length);
+            // Query mentorAssignments where mentorId matches current user
+            const q = query(
+                collection(db, "mentorAssignments"),
+                where("mentorId", "==", userData.uid),
+                where("status", "==", "active") // Only active assignments
+            );
 
-            // 2. Get all students
-            const studentsQuery = query(collection(db, "users"), where("role", "==", "student"));
-            const studentsSnapshot = await getDocs(studentsQuery);
-            console.log("Total students in system:", studentsSnapshot.size);
+            const snapshot = await getDocs(q);
+            console.log("Found mentor assignments:", snapshot.size);
 
-            // 3. For each student, check if they're enrolled in any institution course
-            let totalStudents = 0;
-            let activeStudents = 0;
-
-            for (const studentDoc of studentsSnapshot.docs) {
-                const studentData = studentDoc.data();
-
-                // Get student's enrollments
-                const enrollmentsRef = collection(db, "users", studentDoc.id, "enrollments");
-                const enrollmentsSnap = await getDocs(enrollmentsRef);
-                const enrolledCourseIds = enrollmentsSnap.docs.map(d => d.id);
-
-                // Check if student is enrolled in any institution course
-                const isEnrolledInInstitutionCourse = enrolledCourseIds.some(courseId =>
-                    institutionCourses.some(course => course.id === courseId)
-                );
-
-                if (isEnrolledInInstitutionCourse) {
-                    totalStudents++;
-                    if (enrolledCourseIds.length > 0) {
-                        activeStudents++;
+            // Get student details for each assignment
+            const students = [];
+            for (const assignmentDoc of snapshot.docs) {
+                const assignment = assignmentDoc.data();
+                try {
+                    const studentDoc = await getDoc(doc(db, "users", assignment.studentId));
+                    if (studentDoc.exists() && studentDoc.data().role === "student") {
+                        students.push({
+                            id: studentDoc.id,
+                            ...studentDoc.data(),
+                            assignmentId: assignmentDoc.id,
+                            assignmentData: assignment
+                        });
                     }
+                } catch (error) {
+                    console.error(`Error fetching student ${assignment.studentId}:`, error);
                 }
             }
 
-            console.log("Calculated stats - Total:", totalStudents, "Active:", activeStudents);
+            console.log("Assigned students:", students.length);
+            return students;
+        } catch (error) {
+            console.error("Error fetching assigned students:", error);
+            return [];
+        }
+    };
+
+    // Fetch stats for assigned students
+    const fetchStats = async () => {
+        try {
+            console.log("Fetching stats for partner instructor:", userData?.uid);
+
+            // 1. Get assigned courses
+            const assignedCourses = await fetchAssignedCourses();
+
+            // 2. Get assigned students
+            const assignedStudents = await fetchAssignedStudents();
+
+            // 3. Calculate active students (those with enrollments in assigned courses)
+            let activeStudents = 0;
+
+            for (const student of assignedStudents) {
+                try {
+                    // Check if student has enrollments in any assigned course
+                    const enrollmentsRef = collection(db, "users", student.id, "enrollments");
+                    const enrollmentsSnap = await getDocs(enrollmentsRef);
+
+                    const enrolledCourseIds = enrollmentsSnap.docs.map(d => d.id);
+                    const hasActiveEnrollment = enrolledCourseIds.some(courseId =>
+                        assignedCourses.some(course => course.id === courseId)
+                    );
+
+                    if (hasActiveEnrollment) {
+                        activeStudents++;
+                    }
+                } catch (error) {
+                    console.error(`Error checking enrollments for student ${student.id}:`, error);
+                }
+            }
+
+            console.log("Calculated stats - Total assigned:", assignedStudents.length,
+                "Active:", activeStudents, "Assigned courses:", assignedCourses.length);
 
             setStats({
-                totalStudents,
-                activeStudents,
-                totalCourses: institutionCourses.length,
+                totalStudents: assignedStudents.length,
+                activeStudents: activeStudents,
+                totalCourses: assignedCourses.length,
                 isLoading: false
             });
         } catch (error) {
@@ -133,11 +193,9 @@ export default function PartnerInstructorDashboard() {
 
     useEffect(() => {
         const loadDashboardData = async () => {
-            if (userData?.institutionId) {
+            if (userData?.uid) {
                 await fetchInstitution();
                 await fetchStats();
-
-                // Process permissions for display
                 setPermissionList(processPermissions());
             }
         };
@@ -154,7 +212,7 @@ export default function PartnerInstructorDashboard() {
                         <h1 className="text-3xl font-bold tracking-tight">Partner Instructor Dashboard</h1>
                         <p className="text-muted-foreground mt-2">
                             Welcome, {userData?.fullName || userData?.email}!
-                            Monitor students from your assigned institution
+                            Monitor your assigned students and courses
                         </p>
                     </div>
 
@@ -178,21 +236,7 @@ export default function PartnerInstructorDashboard() {
                                             <p className="text-sm font-medium text-muted-foreground">Location</p>
                                             <p className="text-base font-semibold">{institution.location || "Not specified"}</p>
                                         </div>
-                                        <div>
-                                            <p className="text-sm font-medium text-muted-foreground">Contact Email</p>
-                                            <p className="text-base font-semibold">{institution.contactEmail || "Not specified"}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-sm font-medium text-muted-foreground">Contact Phone</p>
-                                            <p className="text-base font-semibold">{institution.contactPhone || "Not specified"}</p>
-                                        </div>
                                     </div>
-                                    {institution.description && (
-                                        <div className="pt-2 border-t">
-                                            <p className="text-sm font-medium text-muted-foreground">Description</p>
-                                            <p className="text-sm mt-1">{institution.description}</p>
-                                        </div>
-                                    )}
                                 </div>
                             ) : (
                                 <div className="flex items-center justify-center py-4">
@@ -207,7 +251,7 @@ export default function PartnerInstructorDashboard() {
                     <div className="grid gap-4 md:grid-cols-3">
                         <Card>
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">Total Students</CardTitle>
+                                <CardTitle className="text-sm font-medium">Assigned Students</CardTitle>
                                 <Users className="h-4 w-4 text-muted-foreground" />
                             </CardHeader>
                             <CardContent>
@@ -220,7 +264,7 @@ export default function PartnerInstructorDashboard() {
                                     <>
                                         <div className="text-2xl font-bold">{stats.totalStudents}</div>
                                         <p className="text-xs text-muted-foreground">
-                                            From your institution
+                                            Students assigned to you
                                         </p>
                                     </>
                                 )}
@@ -242,7 +286,7 @@ export default function PartnerInstructorDashboard() {
                                     <>
                                         <div className="text-2xl font-bold">{stats.activeStudents}</div>
                                         <p className="text-xs text-muted-foreground">
-                                            Currently enrolled in courses
+                                            Currently enrolled in your courses
                                         </p>
                                     </>
                                 )}
@@ -251,7 +295,7 @@ export default function PartnerInstructorDashboard() {
 
                         <Card>
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">Total Courses</CardTitle>
+                                <CardTitle className="text-sm font-medium">Assigned Courses</CardTitle>
                                 <BookOpen className="h-4 w-4 text-muted-foreground" />
                             </CardHeader>
                             <CardContent>
@@ -264,47 +308,13 @@ export default function PartnerInstructorDashboard() {
                                     <>
                                         <div className="text-2xl font-bold">{stats.totalCourses}</div>
                                         <p className="text-xs text-muted-foreground">
-                                            Available in institution
+                                            Courses you have access to
                                         </p>
                                     </>
                                 )}
                             </CardContent>
                         </Card>
                     </div>
-
-                    {/* Permissions */}
-                    {/* <Card>
-                        <CardHeader className="pb-3">
-                            <CardTitle className="flex items-center gap-2 text-lg">
-                                <Shield className="h-5 w-5 text-primary" />
-                                Your Permissions
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                {permissionList.length > 0 ? (
-                                    permissionList.map((permission, index) => (
-                                        <div key={index} className="flex items-center gap-2 p-2 bg-accent/30 rounded-md">
-                                            <div className="h-2 w-2 rounded-full bg-green-500" />
-                                            <span className="text-sm font-medium">{permission}</span>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="col-span-2 text-center py-4">
-                                        <p className="text-muted-foreground">No specific permissions assigned</p>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            You have default partner instructor permissions
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                            <div className="mt-4 pt-4 border-t">
-                                <p className="text-sm text-muted-foreground">
-                                    Your Role: <span className="font-medium text-foreground">{getRoleDisplayName(userData?.role)}</span>
-                                </p>
-                            </div>
-                        </CardContent>
-                    </Card> */}
 
                     {/* Quick Actions */}
                     <Card>
@@ -323,7 +333,9 @@ export default function PartnerInstructorDashboard() {
                                         </div>
                                         <div>
                                             <h3 className="font-medium">View Students</h3>
-                                            <p className="text-sm text-muted-foreground">Monitor institution students</p>
+                                            <p className="text-sm text-muted-foreground">
+                                                {stats.isLoading ? "Loading..." : `View your ${stats.totalStudents} assigned students`}
+                                            </p>
                                         </div>
                                     </div>
                                 </a>
@@ -338,7 +350,9 @@ export default function PartnerInstructorDashboard() {
                                         </div>
                                         <div>
                                             <h3 className="font-medium">View Courses</h3>
-                                            <p className="text-sm text-muted-foreground">Browse institution courses</p>
+                                            <p className="text-sm text-muted-foreground">
+                                                {stats.isLoading ? "Loading..." : `Access your ${stats.totalCourses} assigned courses`}
+                                            </p>
                                         </div>
                                     </div>
                                 </a>
@@ -348,13 +362,13 @@ export default function PartnerInstructorDashboard() {
                 </div>
             } />
 
-            {/* Routes */}
+            {/* Routes - Updated for Partner Instructors */}
             <Route path="students" element={<PartnerInstructorStudents />} />
-            <Route path="courses" element={<InstructorCourses />} />
-            <Route path="courses/new" element={<CourseEditor />} />
-            <Route path="courses/edit/:courseId" element={<CourseEditor />} />
+            <Route path="courses" element={<PartnerInstructorCourses />} />
+            {/* <Route path="courses/preview/:courseId" element={<PartnerCoursePreview />} /> */}
+            <Route path="courses/preview/:courseId" element={<PartnerCoursePreview />} />
 
-            {/* Catch-all route */}
+            {/* Catch-all route*/}
             <Route path="*" element={<Navigate to="/partner-instructor" replace />} />
         </Routes>
     );

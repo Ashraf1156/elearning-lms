@@ -185,7 +185,7 @@ export default function MentorDetails() {
                     Back
                 </Button>
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">{mentor.name || 'Unnamed Mentor'}</h1>
+                    <h1 className="text-3xl font-bold tracking-tight">{mentor.fullName || 'Unnamed Mentor'}</h1>
                     <p className="text-muted-foreground">Partner Instructor Details</p>
                 </div>
             </div>
@@ -272,15 +272,15 @@ export default function MentorDetails() {
                                     {assignedStudents.map((student) => (
                                         <TableRow key={student.id}>
                                             <TableCell className="font-medium">
-                                                {student.name || 'No name'}
+                                                {student.fullName || 'No name'}
                                             </TableCell>
                                             <TableCell>{student.email}</TableCell>
                                             <TableCell>
                                                 {new Date(student.assignedAt || Date.now()).toLocaleDateString()}
                                             </TableCell>
                                             <TableCell>
-                                                <Badge variant={student.isActive ? "default" : "secondary"}>
-                                                    {student.isActive ? 'Active' : 'Inactive'}
+                                                <Badge variant={student.isActive ? "default" : "default"}>
+                                                    {student.isActive ? 'Active' : 'Active'}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="text-right">
@@ -332,8 +332,8 @@ export default function MentorDetails() {
                                                 {new Date(course.assignedAt || Date.now()).toLocaleDateString()}
                                             </TableCell>
                                             <TableCell>
-                                                <Badge variant={course.isPublished ? "default" : "secondary"}>
-                                                    {course.isPublished ? 'Published' : 'Draft'}
+                                                <Badge variant={course.isPublished ? "default" : "active"}>
+                                                    {course.isPublished ? 'Active' : 'Active'}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="text-right">

@@ -6,7 +6,12 @@ import {
     query,
     where,
     doc,
-    getDoc
+    getDoc,
+    setDoc,
+    updateDoc,
+    arrayUnion,
+    arrayRemove,
+    serverTimestamp
 } from "firebase/firestore";
 import { useAuth } from "../../contexts/AuthContext";
 import {
@@ -18,12 +23,17 @@ import {
     TableRow
 } from "../../components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Search, Eye, X, GraduationCap } from "lucide-react";
+import { Search, Eye, X, GraduationCap, Filter, UserCheck, Ban, CheckCircle, MoreVertical, Loader2, Mail, BookOpen, BarChart3, Clock, AlertCircle, PlusCircle, UserPlus } from "lucide-react";
 import { Button } from "../../components/ui/button";
-import { PERMISSIONS } from "../../lib/rbac";
+import { Badge } from "../../components/ui/badge";
+import { createPortal } from "react-dom";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../../components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { useToast } from "../../contexts/ToastComponent";
 
 export default function PartnerInstructorStudents() {
     const { userData } = useAuth();
+    const { toast } = useToast();
     const [students, setStudents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
@@ -35,225 +45,611 @@ export default function PartnerInstructorStudents() {
     const [courses, setCourses] = useState([]);
     const [selectedCourseId, setSelectedCourseId] = useState("all");
 
-    // Check permissions directly using hasPermission from useAuth
-    const canViewStudents = userData?.role === 'partner_instructor' ||
-        userData?.role === 'instructor' ||
-        userData?.role === 'admin';
-    const canViewProgress = userData?.role === 'partner_instructor' ||
-        userData?.role === 'instructor' ||
-        userData?.role === 'admin';
+    // Student Type Filter
+    const [studentTypeFilter, setStudentTypeFilter] = useState("all");
+
+    // Statistics
+    const [stats, setStats] = useState({
+        totalAssigned: 0,
+        activeAssigned: 0
+    });
+
+    // Ban/Unban menu state
+    const [openMenuId, setOpenMenuId] = useState(null);
+    const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+
+    const [isModalLoading, setIsModalLoading] = useState(false);
+
+    // Enrollment dialog state
+    const [enrollmentDialogOpen, setEnrollmentDialogOpen] = useState(false);
+    const [selectedStudentForEnrollment, setSelectedStudentForEnrollment] = useState(null);
+    const [selectedCourseForEnrollment, setSelectedCourseForEnrollment] = useState("");
+    const [availableCoursesForEnrollment, setAvailableCoursesForEnrollment] = useState([]);
+    const [enrolling, setEnrolling] = useState(false);
 
     useEffect(() => {
-        if (canViewStudents && userData) {
-            fetchStudents();
-            fetchCourses();
+        if (userData?.uid) {
+            fetchData();
         }
-    }, [userData, canViewStudents]);
+    }, [userData]);
 
-    // Fetch courses that the partner instructor has access to
-    const fetchCourses = async () => {
-        try {
-            // First, get the partner instructor's institution
-            const institutionId = userData.institutionId;
+    // Close menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = () => setOpenMenuId(null);
+        document.addEventListener("click", handleClickOutside);
+        return () => document.removeEventListener("click", handleClickOutside);
+    }, []);
 
-            if (!institutionId) {
-                console.error("No institution assigned to partner instructor");
-                setCourses([]);
-                return;
-            }
+    // Handle scroll to close menu
+    useEffect(() => {
+        const handleScroll = () => setOpenMenuId(null);
+        window.addEventListener("scroll", handleScroll, true);
+        return () => window.removeEventListener("scroll", handleScroll, true);
+    }, []);
 
-            // Fetch courses for this institution
-            const q = query(
-                collection(db, "courses"),
-                where("institutionId", "==", institutionId)
-            );
-
-            const querySnapshot = await getDocs(q);
-            const coursesData = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-
-            setCourses(coursesData);
-        } catch (error) {
-            console.error("Error fetching courses:", error);
-        }
-    };
-
-    // Fetch students enrolled in the partner instructor's institution courses
-    const fetchStudents = async () => {
+    // Main fetch function
+    const fetchData = async () => {
         try {
             setLoading(true);
+            const [assignedCourses, assignedStudents] = await Promise.all([
+                fetchAssignedCourses(),
+                fetchAssignedStudents()
+            ]);
 
-            const institutionId = userData.institutionId;
+            const assignedCount = assignedStudents.length;
+            const activeCount = assignedStudents.filter(s =>
+                s.enrolledCourses && s.enrolledCourses.length > 0
+            ).length;
 
-            if (!institutionId) {
-                console.error("No institution assigned");
-                setStudents([]);
-                setLoading(false);
-                return;
-            }
+            setStats({
+                totalAssigned: assignedCount,
+                activeAssigned: activeCount
+            });
 
-            // Get all students (we'll filter by institution later)
-            const q = query(collection(db, "users"), where("role", "==", "student"));
-            const querySnapshot = await getDocs(q);
+            setCourses(assignedCourses);
+            setStudents(assignedStudents);
 
-            const studentsData = [];
-
-            for (const docSnapshot of querySnapshot.docs) {
-                const studentData = {
-                    id: docSnapshot.id,
-                    ...docSnapshot.data()
-                };
-
-                // Get student's enrolled courses
-                const enrollmentsRef = collection(db, "users", docSnapshot.id, "enrollments");
-                const enrollmentsSnap = await getDocs(enrollmentsRef);
-                const enrolledCourseIds = enrollmentsSnap.docs.map(d => d.id);
-
-                // Get enrolled courses data
-                const enrolledCourses = [];
-                for (const courseId of enrolledCourseIds) {
-                    const courseRef = doc(db, "courses", courseId);
-                    const courseSnap = await getDoc(courseRef);
-
-                    if (courseSnap.exists()) {
-                        const courseData = courseSnap.data();
-                        // Check if course belongs to partner instructor's institution
-                        if (courseData.institutionId === institutionId) {
-                            enrolledCourses.push({
-                                id: courseId,
-                                ...courseData
-                            });
-                        }
-                    }
-                }
-
-                // Only include students enrolled in at least one institution course
-                if (enrolledCourses.length > 0) {
-                    studentData.enrolledCourses = enrolledCourses;
-                    studentsData.push(studentData);
-                }
-            }
-
-            setStudents(studentsData);
         } catch (error) {
-            console.error("Error fetching students:", error);
+            console.error("Error fetching data:", error);
+            toast.error("Failed to load data");
         } finally {
             setLoading(false);
         }
     };
 
-    const fetchStudentProgress = async (studentId) => {
-        if (!canViewProgress) return;
-
+    // Fetch courses assigned to this mentor
+    const fetchAssignedCourses = async () => {
         try {
-            // Get progress for all institution courses
-            const progressData = [];
+            // 1. Get course assignments from mentorCourseAssignments
+            const q = query(
+                collection(db, "mentorCourseAssignments"),
+                where("mentorId", "==", userData.uid)
+            );
+            const snap = await getDocs(q);
 
-            for (const course of courses) {
-                const progressRef = doc(db, "users", studentId, "courseProgress", course.id);
-                const progressSnap = await getDoc(progressRef);
-
-                if (progressSnap.exists()) {
-                    progressData.push({
-                        courseId: course.id,
-                        courseTitle: course.title,
-                        ...progressSnap.data()
-                    });
-                } else {
-                    // Student might be enrolled but no progress yet
-                    progressData.push({
-                        courseId: course.id,
-                        courseTitle: course.title,
-                        completedModules: [],
-                        lastAccessed: null,
-                        progressPercentage: 0
-                    });
-                }
+            if (snap.empty) {
+                return [];
             }
 
-            setStudentProgress(progressData);
+            const assignments = snap.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+
+            // 2. Fetch course details for assigned courses
+            const courseIds = assignments.map(assignment => assignment.courseId);
+            const coursesData = [];
+
+            // Process in batches of 30
+            for (let i = 0; i < courseIds.length; i += 30) {
+                const batchIds = courseIds.slice(i, i + 30);
+                if (batchIds.length === 0) continue;
+
+                const coursesQ = query(
+                    collection(db, "courses"),
+                    where("__name__", "in", batchIds)
+                );
+                const coursesSnap = await getDocs(coursesQ);
+
+                const batchCourses = coursesSnap.docs.map(doc => {
+                    const courseData = doc.data();
+                    return {
+                        id: doc.id,
+                        ...courseData,
+                        isAssigned: true,
+                        assignmentId: assignments.find(a => a.courseId === doc.id)?.id
+                    };
+                });
+
+                coursesData.push(...batchCourses);
+            }
+
+            return coursesData;
         } catch (error) {
-            console.error("Error fetching student progress:", error);
+            console.error("Error fetching assigned courses:", error);
+            return [];
         }
     };
 
-    const fetchStudentEnrolledCourses = async (studentId) => {
+    // Fetch students assigned to this mentor
+    const fetchAssignedStudents = async () => {
         try {
-            const enrollmentsRef = collection(db, "users", studentId, "enrollments");
-            const enrollmentsSnap = await getDocs(enrollmentsRef);
-            const enrolledCourseIds = enrollmentsSnap.docs.map(d => d.id);
+            // 1. Get mentor assignments
+            const q = query(
+                collection(db, "mentorAssignments"),
+                where("mentorId", "==", userData.uid),
+                where("status", "==", "active")
+            );
+            const snap = await getDocs(q);
 
-            const courseDetails = [];
-            for (const courseId of enrolledCourseIds) {
-                const courseRef = doc(db, "courses", courseId);
-                const courseSnap = await getDoc(courseRef);
+            if (snap.empty) {
+                return [];
+            }
 
-                if (courseSnap.exists()) {
-                    const courseData = courseSnap.data();
-                    // Only show courses from this institution
-                    if (courseData.institutionId === userData.institutionId) {
-                        courseDetails.push({
-                            id: courseId,
-                            ...courseData
-                        });
+            const assignments = snap.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+
+            // 2. Fetch student details for assigned students
+            const studentIds = assignments.map(assignment => assignment.studentId);
+            const studentsData = [];
+
+            for (let i = 0; i < studentIds.length; i += 30) {
+                const batchIds = studentIds.slice(i, i + 30);
+                if (batchIds.length === 0) continue;
+
+                const studentsQ = query(
+                    collection(db, "users"),
+                    where("__name__", "in", batchIds)
+                );
+                const studentsSnap = await getDocs(studentsQ);
+
+                for (const studentDoc of studentsSnap.docs) {
+                    const studentId = studentDoc.id;
+                    const studentData = studentDoc.data();
+
+                    if (studentData.role !== "student") continue;
+
+                    const assignment = assignments.find(a => a.studentId === studentId);
+
+                    // Get enrolled courses
+                    const enrolledCourses = await getStudentEnrolledCourses(studentId);
+
+                    // Fetch progress for enrolled courses
+                    const progressMap = {};
+                    for (const course of enrolledCourses) {
+                        try {
+                            const progressRef = doc(db, "users", studentId, "courseProgress", course.id);
+                            const progressSnap = await getDoc(progressRef);
+
+                            if (progressSnap.exists()) {
+                                const progressData = progressSnap.data();
+                                const completedModules = progressData.completedModules || [];
+                                const totalModules = course.modules?.length || course.totalModules || 1;
+                                const progressPercentage = Math.round((completedModules.length / totalModules) * 100);
+
+                                progressMap[course.id] = {
+                                    ...progressData,
+                                    progressPercentage,
+                                    completedCount: completedModules.length,
+                                    totalModules
+                                };
+                            } else {
+                                progressMap[course.id] = {
+                                    completedModules: [],
+                                    progressPercentage: 0,
+                                    completedCount: 0,
+                                    totalModules: course.modules?.length || course.totalModules || 1
+                                };
+                            }
+                        } catch (error) {
+                            console.error(`Error fetching progress:`, error);
+                            progressMap[course.id] = {
+                                completedModules: [],
+                                progressPercentage: 0,
+                                completedCount: 0,
+                                totalModules: course.modules?.length || course.totalModules || 1
+                            };
+                        }
                     }
+
+                    studentsData.push({
+                        id: studentId,
+                        ...studentData,
+                        isAssigned: true,
+                        assignedDate: assignment?.assignedDate,
+                        assignmentId: assignment?.id,
+                        enrolledCourses,
+                        enrollmentCount: enrolledCourses.length,
+                        bannedFrom: studentData.bannedFrom || [],
+                        progressMap
+                    });
                 }
             }
 
-            setStudentCourses(courseDetails);
+            return studentsData;
         } catch (error) {
-            console.error("Error fetching student courses:", error);
+            console.error("Error fetching assigned students:", error);
+            return [];
         }
+    };
+
+    // Get student's enrolled courses from multiple sources
+    const getStudentEnrolledCourses = async (studentId) => {
+        try {
+            const enrolledCourses = [];
+
+            // Method 1: Check enrollments subcollection
+            const enrollmentsRef = collection(db, "users", studentId, "enrollments");
+            const enrollmentsSnap = await getDocs(enrollmentsRef);
+
+            if (!enrollmentsSnap.empty) {
+                const enrollmentIds = enrollmentsSnap.docs.map(doc => doc.id);
+                const courses = await fetchCourseDetails(enrollmentIds);
+                enrolledCourses.push(...courses);
+            }
+
+            // Method 2: Check enrolledCourses array on user document
+            const userDoc = await getDoc(doc(db, "users", studentId));
+            const userData = userDoc.data();
+
+            if (userData?.enrolledCourses && Array.isArray(userData.enrolledCourses)) {
+                const courses = await fetchCourseDetails(userData.enrolledCourses);
+                // Filter out duplicates
+                courses.forEach(course => {
+                    if (!enrolledCourses.find(ec => ec.id === course.id)) {
+                        enrolledCourses.push(course);
+                    }
+                });
+            }
+
+            return enrolledCourses;
+        } catch (error) {
+            console.error(`Error getting enrolled courses for ${studentId}:`, error);
+            return [];
+        }
+    };
+
+    // Helper to fetch course details
+    const fetchCourseDetails = async (courseIds) => {
+        if (!courseIds || courseIds.length === 0) {
+            return [];
+        }
+
+        const coursesData = [];
+
+        for (let i = 0; i < courseIds.length; i += 30) {
+            const batchIds = courseIds.slice(i, i + 30);
+            if (batchIds.length === 0) continue;
+
+            try {
+                const coursesQ = query(
+                    collection(db, "courses"),
+                    where("__name__", "in", batchIds)
+                );
+                const coursesSnap = await getDocs(coursesQ);
+
+                coursesSnap.docs.forEach(courseDoc => {
+                    const courseData = courseDoc.data();
+                    coursesData.push({
+                        id: courseDoc.id,
+                        ...courseData,
+                        totalModules: courseData.modules?.length || courseData.totalModules || 0
+                    });
+                });
+            } catch (error) {
+                console.error("Error fetching course batch:", error);
+            }
+        }
+
+        return coursesData;
     };
 
     const handleViewStudent = async (student) => {
+        setIsModalLoading(true);
         setSelectedStudent(student);
-        if (canViewProgress) {
-            await fetchStudentProgress(student.id);
+
+        const enrolled = student.enrolledCourses || [];
+        setStudentCourses(enrolled);
+
+        // Fetch detailed progress for modal
+        const progressData = [];
+        for (const course of enrolled) {
+            try {
+                const progressRef = doc(db, "users", student.id, "courseProgress", course.id);
+                const progressSnap = await getDoc(progressRef);
+
+                if (progressSnap.exists()) {
+                    const progress = progressSnap.data();
+                    const completedModules = progress.completedModules || [];
+                    const totalModules = course.modules?.length || course.totalModules || 1;
+                    const progressPercentage = Math.round((completedModules.length / totalModules) * 100);
+
+                    progressData.push({
+                        courseId: course.id,
+                        courseTitle: course.title,
+                        isAssignedCourse: courses.some(c => c.id === course.id),
+                        ...progress,
+                        progressPercentage,
+                        completedCount: completedModules.length,
+                        totalModules,
+                        lastAccessed: progress.lastAccessed || null
+                    });
+                } else {
+                    progressData.push({
+                        courseId: course.id,
+                        courseTitle: course.title,
+                        isAssignedCourse: courses.some(c => c.id === course.id),
+                        completedModules: [],
+                        lastAccessed: null,
+                        progressPercentage: 0,
+                        completedCount: 0,
+                        totalModules: course.modules?.length || course.totalModules || 1
+                    });
+                }
+            } catch (error) {
+                console.error(`Error fetching progress:`, error);
+                progressData.push({
+                    courseId: course.id,
+                    courseTitle: course.title,
+                    isAssignedCourse: courses.some(c => c.id === course.id),
+                    completedModules: [],
+                    lastAccessed: null,
+                    progressPercentage: 0,
+                    completedCount: 0,
+                    totalModules: course.modules?.length || course.totalModules || 1
+                });
+            }
         }
-        await fetchStudentEnrolledCourses(student.id);
+
+        setStudentProgress(progressData);
+        setIsModalLoading(false);
     };
 
-    // Filter students based on search and selected course
+    // Open enrollment dialog
+    const handleOpenEnrollmentDialog = (student) => {
+        setSelectedStudentForEnrollment(student);
+
+        // Find courses the student is NOT enrolled in
+        const studentEnrolledCourseIds = student.enrolledCourses?.map(c => c.id) || [];
+        const availableCourses = courses.filter(course =>
+            !studentEnrolledCourseIds.includes(course.id)
+        );
+
+        setAvailableCoursesForEnrollment(availableCourses);
+        setSelectedCourseForEnrollment(availableCourses.length > 0 ? availableCourses[0].id : "");
+        setEnrollmentDialogOpen(true);
+    };
+
+    // Enroll student in course
+    const handleEnrollStudent = async () => {
+        if (!selectedCourseForEnrollment || !selectedStudentForEnrollment) {
+            toast.error("Please select a course");
+            return;
+        }
+
+        try {
+            setEnrolling(true);
+
+            const studentId = selectedStudentForEnrollment.id;
+            const courseId = selectedCourseForEnrollment;
+
+            // Get course details
+            const courseRef = doc(db, "courses", courseId);
+            const courseSnap = await getDoc(courseRef);
+
+            if (!courseSnap.exists()) {
+                toast.error("Course not found");
+                return;
+            }
+
+            // 1. Update user's enrolledCourses array
+            await updateDoc(doc(db, "users", studentId), {
+                enrolledCourses: arrayUnion(courseId)
+            });
+
+            // 2. Create enrollment document in subcollection
+            const enrollmentRef = doc(db, "users", studentId, "enrollments", courseId);
+            await setDoc(enrollmentRef, {
+                enrolledAt: serverTimestamp(),
+                enrolledBy: userData.uid,
+                status: "active",
+                mentorId: userData.uid
+            });
+
+            // 3. Create initial progress document
+            const progressRef = doc(db, "users", studentId, "courseProgress", courseId);
+            await setDoc(progressRef, {
+                enrolledAt: serverTimestamp(),
+                lastAccessed: serverTimestamp(),
+                completedModules: [],
+                totalModules: courseSnap.data().modules?.length || courseSnap.data().totalModules || 0,
+                progressPercentage: 0
+            });
+
+            // 4. Update local state
+            const updatedStudents = students.map(s => {
+                if (s.id === studentId) {
+                    const newCourse = {
+                        id: courseId,
+                        ...courseSnap.data(),
+                        totalModules: courseSnap.data().modules?.length || courseSnap.data().totalModules || 0
+                    };
+
+                    return {
+                        ...s,
+                        enrolledCourses: [...(s.enrolledCourses || []), newCourse],
+                        enrollmentCount: (s.enrollmentCount || 0) + 1,
+                        progressMap: {
+                            ...s.progressMap,
+                            [courseId]: {
+                                completedModules: [],
+                                progressPercentage: 0,
+                                completedCount: 0,
+                                totalModules: newCourse.totalModules
+                            }
+                        }
+                    };
+                }
+                return s;
+            });
+
+            setStudents(updatedStudents);
+
+            // Update selected student if modal is open
+            if (selectedStudent && selectedStudent.id === studentId) {
+                setSelectedStudent(prev => ({
+                    ...prev,
+                    enrolledCourses: [...(prev.enrolledCourses || []), {
+                        id: courseId,
+                        ...courseSnap.data(),
+                        totalModules: courseSnap.data().modules?.length || courseSnap.data().totalModules || 0
+                    }],
+                    enrollmentCount: (prev.enrollmentCount || 0) + 1
+                }));
+            }
+
+            // Update statistics
+            const activeCount = updatedStudents.filter(s =>
+                s.enrolledCourses && s.enrolledCourses.length > 0
+            ).length;
+
+            setStats(prev => ({
+                ...prev,
+                activeAssigned: activeCount
+            }));
+
+            toast.success(`Successfully enrolled ${selectedStudentForEnrollment.fullName || selectedStudentForEnrollment.email} in the course`);
+            setEnrollmentDialogOpen(false);
+            setSelectedCourseForEnrollment("");
+            setSelectedStudentForEnrollment(null);
+
+        } catch (error) {
+            console.error("Error enrolling student:", error);
+            toast.error("Failed to enroll student");
+        } finally {
+            setEnrolling(false);
+        }
+    };
+
+    // Ban/Unban functions
+    const handleBan = async (studentId, courseId) => {
+        if (!window.confirm("Ban this student from the course? They will lose access to all course materials.")) return;
+        try {
+            await updateDoc(doc(db, "users", studentId), {
+                bannedFrom: arrayUnion(courseId)
+            });
+
+            setStudents(students.map(s => {
+                if (s.id === studentId) {
+                    return {
+                        ...s,
+                        bannedFrom: [...(s.bannedFrom || []), courseId]
+                    };
+                }
+                return s;
+            }));
+
+            if (selectedStudent && selectedStudent.id === studentId) {
+                setSelectedStudent(prev => ({
+                    ...prev,
+                    bannedFrom: [...(prev.bannedFrom || []), courseId]
+                }));
+            }
+
+            setOpenMenuId(null);
+            toast.success("Student banned from course");
+        } catch (error) {
+            console.error("Error banning student:", error);
+            toast.error("Failed to ban student");
+        }
+    };
+
+    const handleUnban = async (studentId, courseId) => {
+        if (!window.confirm("Unban this student? They will regain access to the course.")) return;
+        try {
+            await updateDoc(doc(db, "users", studentId), {
+                bannedFrom: arrayRemove(courseId)
+            });
+
+            setStudents(students.map(s => {
+                if (s.id === studentId) {
+                    return {
+                        ...s,
+                        bannedFrom: (s.bannedFrom || []).filter(id => id !== courseId)
+                    };
+                }
+                return s;
+            }));
+
+            if (selectedStudent && selectedStudent.id === studentId) {
+                setSelectedStudent(prev => ({
+                    ...prev,
+                    bannedFrom: (prev.bannedFrom || []).filter(id => id !== courseId)
+                }));
+            }
+
+            setOpenMenuId(null);
+            toast.success("Student unbanned from course");
+        } catch (error) {
+            console.error("Error unbanning student:", error);
+            toast.error("Failed to unban student");
+        }
+    };
+
+    const handleMenuClick = (e, menuId) => {
+        e.stopPropagation();
+        if (openMenuId === menuId) {
+            setOpenMenuId(null);
+        } else {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMenuPosition({
+                top: rect.bottom + window.scrollY,
+                left: rect.right - 192 + window.scrollX
+            });
+            setOpenMenuId(menuId);
+        }
+    };
+
+    // Filter students
     const filteredStudents = students.filter(student => {
         const matchesSearch = searchQuery === "" ||
             student.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             student.fullName?.toLowerCase().includes(searchQuery.toLowerCase());
 
-        // If "all" is selected, show all students in the institution
-        if (selectedCourseId === "all") {
-            return matchesSearch;
+        let matchesCourse = true;
+        if (selectedCourseId !== "all") {
+            matchesCourse = student.enrolledCourses?.some(
+                course => course.id === selectedCourseId
+            ) || false;
         }
 
-        // Filter by selected course
-        const isEnrolledInCourse = student.enrolledCourses?.some(
-            course => course.id === selectedCourseId
-        );
+        let matchesType = true;
+        if (studentTypeFilter === "assigned") {
+            matchesType = student.isAssigned === true;
+        }
 
-        return matchesSearch && isEnrolledInCourse;
+        return matchesSearch && matchesCourse && matchesType;
     });
 
-    if (!canViewStudents) {
-        return (
-            <div className="text-center py-12">
-                <div className="mx-auto max-w-md">
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-6">
-                        <h3 className="text-lg font-semibold text-red-800">Access Denied</h3>
-                        <p className="mt-2 text-sm text-red-600">
-                            You don't have permission to view students. Please contact your administrator.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        );
-    }
+    // Get available course options for filter
+    const availableCourses = courses.filter(course =>
+        students.some(student =>
+            student.enrolledCourses?.some(ec => ec.id === course.id)
+        )
+    );
+
+    // Refresh button
+    const handleRefresh = () => {
+        fetchData();
+    };
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-64">
+            <div className="flex flex-col items-center justify-center h-64">
                 <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                <span className="ml-2 mt-2">Loading students...</span>
             </div>
         );
     }
@@ -261,15 +657,18 @@ export default function PartnerInstructorStudents() {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div>
-                <h1 className="text-3xl font-bold tracking-tight">
-                    {userData?.role === 'partner_instructor' ? 'My Students' : 'Institution Students'}
-                </h1>
-                <p className="text-muted-foreground mt-2">
-                    {userData?.role === 'partner_instructor'
-                        ? 'View students assigned to your courses'
-                        : 'View students enrolled in your institution\'s courses'}
-                </p>
+            <div className="flex justify-between items-center">
+                <div>
+                    <h1 className="text-3xl font-bold tracking-tight">
+                        {userData?.role === 'partner_instructor' ? 'My Students' : 'Institution Students'}
+                    </h1>
+                    <p className="text-muted-foreground mt-2">
+                        Manage and monitor students assigned to you
+                    </p>
+                </div>
+                <Button onClick={handleRefresh} variant="outline">
+                    Refresh
+                </Button>
             </div>
 
             {/* Filters Row */}
@@ -286,16 +685,31 @@ export default function PartnerInstructorStudents() {
                     />
                 </div>
 
+                {/* Student Type Filter */}
+                <div className="w-full md:w-auto">
+                    <div className="flex items-center gap-2">
+                        <Filter className="h-4 w-4 text-muted-foreground" />
+                        <select
+                            className="px-3 py-2 rounded-md border border-input bg-background text-sm w-full md:w-48"
+                            value={studentTypeFilter}
+                            onChange={(e) => setStudentTypeFilter(e.target.value)}
+                        >
+                            <option value="all">All Students</option>
+                            <option value="assigned">Assigned to Me</option>
+                        </select>
+                    </div>
+                </div>
+
                 {/* Course Filter Dropdown */}
-                {courses.length > 0 && (
+                {availableCourses.length > 0 && (
                     <div className="w-full md:w-64">
                         <select
                             className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
                             value={selectedCourseId}
                             onChange={(e) => setSelectedCourseId(e.target.value)}
                         >
-                            <option value="all">All Students</option>
-                            {courses.map(course => (
+                            <option value="all">All Courses</option>
+                            {availableCourses.map(course => (
                                 <option key={course.id} value={course.id}>
                                     {course.title}
                                 </option>
@@ -305,8 +719,8 @@ export default function PartnerInstructorStudents() {
                 )}
             </div>
 
-            {/* Stats Card */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <Card>
                     <CardContent className="pt-6">
                         <div className="flex items-center justify-between">
@@ -318,27 +732,42 @@ export default function PartnerInstructorStudents() {
                         </div>
                     </CardContent>
                 </Card>
+
                 <Card>
                     <CardContent className="pt-6">
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-sm font-medium text-muted-foreground">Courses</p>
-                                <p className="text-2xl font-bold">{courses.length}</p>
+                                <p className="text-sm font-medium text-muted-foreground">Assigned to Me</p>
+                                <p className="text-2xl font-bold">{stats.totalAssigned}</p>
+                                <p className="text-xs text-muted-foreground">
+                                    {stats.activeAssigned} with courses
+                                </p>
                             </div>
-                            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                                <span className="text-blue-600 font-bold">{courses.length}</span>
-                            </div>
+                            <UserCheck className="h-8 w-8 text-blue-600" />
                         </div>
                     </CardContent>
                 </Card>
+
+                <Card>
+                    <CardContent className="pt-6">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-sm font-medium text-muted-foreground">Available Courses</p>
+                                <p className="text-2xl font-bold">{courses.length}</p>
+                            </div>
+                            <BookOpen className="h-8 w-8 text-green-600" />
+                        </div>
+                    </CardContent>
+                </Card>
+
                 <Card>
                     <CardContent className="pt-6">
                         <div className="flex items-center justify-between">
                             <div>
                                 <p className="text-sm font-medium text-muted-foreground">Showing</p>
-                                <p className="text-2xl font-bold">{filteredStudents.length} students</p>
+                                <p className="text-2xl font-bold">{filteredStudents.length}</p>
                             </div>
-                            <Eye className="h-8 w-8 text-green-600" />
+                            <Eye className="h-8 w-8 text-purple-600" />
                         </div>
                     </CardContent>
                 </Card>
@@ -347,172 +776,505 @@ export default function PartnerInstructorStudents() {
             {/* Students Table */}
             <Card>
                 <CardHeader>
-                    <CardTitle>Students</CardTitle>
-                    <p className="text-sm text-muted-foreground font-normal">
-                        {selectedCourseId === "all"
-                            ? "All students in your institution"
-                            : `Students enrolled in selected course`}
-                    </p>
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <CardTitle>Students ({filteredStudents.length})</CardTitle>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground font-normal">
+                                <span>
+                                    {studentTypeFilter === "all" && "All students assigned to you"}
+                                    {studentTypeFilter === "assigned" && "Students assigned to you"}
+                                </span>
+                                {selectedCourseId !== "all" && (
+                                    <span className="text-primary">
+                                        • Filtered by course
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <Dialog open={enrollmentDialogOpen} onOpenChange={setEnrollmentDialogOpen}>
+                            <DialogTrigger asChild>
+                                <Button className="gap-2">
+                                    <UserPlus className="h-4 w-4" />
+                                    Enroll Student
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle>Enroll Student in Course</DialogTitle>
+                                    <DialogDescription>
+                                        Select a student and course to enroll them.
+                                    </DialogDescription>
+                                </DialogHeader>
+
+                                <div className="space-y-4 py-4">
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">Student</label>
+                                        <Select
+                                            onValueChange={(value) => {
+                                                const student = students.find(s => s.id === value);
+                                                setSelectedStudentForEnrollment(student);
+                                                if (student) {
+                                                    const studentEnrolledCourseIds = student.enrolledCourses?.map(c => c.id) || [];
+                                                    const available = courses.filter(c => !studentEnrolledCourseIds.includes(c.id));
+                                                    setAvailableCoursesForEnrollment(available);
+                                                    setSelectedCourseForEnrollment(available.length > 0 ? available[0].id : "");
+                                                }
+                                            }}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Select a student" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {students.map(student => (
+                                                    <SelectItem key={student.id} value={student.id}>
+                                                        {student.fullName || student.email}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium">Course</label>
+                                        <Select
+                                            value={selectedCourseForEnrollment}
+                                            onValueChange={setSelectedCourseForEnrollment}
+                                            disabled={!selectedStudentForEnrollment || availableCoursesForEnrollment.length === 0}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Select a course" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {availableCoursesForEnrollment.map(course => (
+                                                    <SelectItem key={course.id} value={course.id}>
+                                                        {course.title}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        {selectedStudentForEnrollment && availableCoursesForEnrollment.length === 0 && (
+                                            <p className="text-sm text-muted-foreground">
+                                                This student is already enrolled in all available courses.
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    {selectedStudentForEnrollment && selectedCourseForEnrollment && (
+                                        <div className="p-4 bg-muted/50 rounded-lg">
+                                            <p className="text-sm font-medium">Enrollment Summary:</p>
+                                            <p className="text-sm">
+                                                <span className="font-medium">Student:</span> {selectedStudentForEnrollment.fullName || selectedStudentForEnrollment.email}
+                                            </p>
+                                            <p className="text-sm">
+                                                <span className="font-medium">Course:</span> {availableCoursesForEnrollment.find(c => c.id === selectedCourseForEnrollment)?.title}
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <DialogFooter>
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => setEnrollmentDialogOpen(false)}
+                                        disabled={enrolling}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        onClick={handleEnrollStudent}
+                                        disabled={!selectedStudentForEnrollment || !selectedCourseForEnrollment || enrolling}
+                                    >
+                                        {enrolling ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                                Enrolling...
+                                            </>
+                                        ) : (
+                                            "Enroll Student"
+                                        )}
+                                    </Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+                    </div>
                 </CardHeader>
                 <CardContent>
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>Name</TableHead>
-                                <TableHead>Email</TableHead>
-                                <TableHead>College</TableHead>
-                                <TableHead>Enrolled Courses</TableHead>
-                                <TableHead>Actions</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {filteredStudents.length === 0 ? (
+                    {filteredStudents.length === 0 ? (
+                        <div className="text-center py-12 text-muted-foreground">
+                            <div className="flex flex-col items-center gap-2">
+                                <Search className="h-8 w-8 opacity-50" />
+                                <p>{searchQuery || studentTypeFilter !== "all" || selectedCourseId !== "all"
+                                    ? "No students match your filters"
+                                    : "No students found"}
+                                </p>
+                                {!searchQuery && studentTypeFilter === "all" && selectedCourseId === "all" && (
+                                    <p className="text-sm">Students will appear here once they are assigned to you</p>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <Table>
+                            <TableHeader>
                                 <TableRow>
-                                    <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
-                                        <div className="flex flex-col items-center gap-2">
-                                            <Search className="h-8 w-8 opacity-50" />
-                                            <p>{searchQuery ? "No students match your search" : "No students found"}</p>
-                                            {!searchQuery && (
-                                                <p className="text-sm">Students will appear here once they enroll in your institution's courses</p>
-                                            )}
-                                        </div>
-                                    </TableCell>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>Name</TableHead>
+                                    <TableHead>Email</TableHead>
+                                    <TableHead>College</TableHead>
+                                    <TableHead>Course Progress</TableHead>
+                                    <TableHead className="w-[100px]">Actions</TableHead>
                                 </TableRow>
-                            ) : (
-                                filteredStudents.map((student) => (
-                                    <TableRow key={student.id}>
-                                        <TableCell className="font-medium">
-                                            {student.fullName || "N/A"}
-                                        </TableCell>
-                                        <TableCell>{student.email}</TableCell>
-                                        <TableCell>{student.college || "N/A"}</TableCell>
-                                        <TableCell>
-                                            <div className="flex flex-wrap gap-1">
-                                                {student.enrolledCourses?.slice(0, 2).map(course => (
-                                                    <span
-                                                        key={course.id}
-                                                        className="inline-block px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full"
-                                                    >
-                                                        {course.title}
-                                                    </span>
-                                                ))}
-                                                {student.enrolledCourses?.length > 2 && (
-                                                    <span className="inline-block px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
-                                                        +{student.enrolledCourses.length - 2} more
-                                                    </span>
+                            </TableHeader>
+                            <TableBody>
+                                {filteredStudents.map((student) => {
+                                    const studentMyCourses = courses.filter(c =>
+                                        student.enrolledCourses?.some(ec => ec.id === c.id)
+                                    );
+                                    const displayCourses = selectedCourseId === "all"
+                                        ? studentMyCourses
+                                        : studentMyCourses.filter(c => c.id === selectedCourseId);
+
+                                    return (
+                                        <TableRow key={student.id} className="hover:bg-muted/50">
+                                            <TableCell>
+                                                {student.isAssigned ? (
+                                                    <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">
+                                                        <UserCheck className="h-3 w-3 mr-1" />
+                                                        Assigned
+                                                    </Badge>
+                                                ) : (
+                                                    <Badge variant="outline" className="text-gray-600">
+                                                        Institution
+                                                    </Badge>
                                                 )}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell>
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                onClick={() => handleViewStudent(student)}
-                                                title="View Details"
-                                            >
-                                                <Eye className="h-4 w-4" />
-                                            </Button>
-                                        </TableCell>
-                                    </TableRow>
-                                ))
-                            )}
-                        </TableBody>
-                    </Table>
+                                            </TableCell>
+                                            <TableCell className="font-medium">
+                                                {student.fullName || "N/A"}
+                                            </TableCell>
+                                            <TableCell>{student.email}</TableCell>
+                                            <TableCell>{student.college || "N/A"}</TableCell>
+                                            <TableCell>
+                                                <div className="flex flex-col gap-3">
+                                                    {displayCourses.length > 0 ? (
+                                                        displayCourses.map(course => {
+                                                            const isBanned = student.bannedFrom?.includes(course.id);
+                                                            const menuId = `${student.id}-${course.id}`;
+                                                            const progress = student.progressMap?.[course.id];
+                                                            const progressPercentage = progress?.progressPercentage || 0;
+                                                            const completedCount = progress?.completedCount || 0;
+                                                            const totalModules = progress?.totalModules || course.totalModules || 0;
+
+                                                            return (
+                                                                <div key={course.id} className="flex items-center gap-2">
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <div className="flex items-center justify-between mb-1">
+                                                                            <span className={`text-sm font-medium truncate ${isBanned ? 'line-through text-destructive' : ''}`}>
+                                                                                {course.title}
+                                                                                {isBanned && (
+                                                                                    <Ban className="h-3 w-3 inline ml-1" />
+                                                                                )}
+                                                                            </span>
+                                                                            <span className="text-xs font-semibold text-primary ml-2">
+                                                                                {progressPercentage}%
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
+                                                                                <div
+                                                                                    className={`h-full rounded-full ${isBanned ? 'bg-destructive' : 'bg-primary'}`}
+                                                                                    style={{ width: `${progressPercentage}%` }}
+                                                                                />
+                                                                            </div>
+                                                                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                                                                {completedCount}/{totalModules}
+                                                                            </span>
+                                                                            <div className="relative">
+                                                                                <Button
+                                                                                    variant="ghost"
+                                                                                    size="icon"
+                                                                                    className="h-6 w-6"
+                                                                                    onClick={(e) => handleMenuClick(e, menuId)}
+                                                                                >
+                                                                                    <MoreVertical className="h-3 w-3" />
+                                                                                </Button>
+
+                                                                                {openMenuId === menuId && createPortal(
+                                                                                    <div
+                                                                                        className="fixed bg-popover border rounded-md shadow-md z-[9999] overflow-hidden w-48"
+                                                                                        style={{ top: menuPosition.top, left: menuPosition.left }}
+                                                                                        onClick={(e) => e.stopPropagation()}
+                                                                                    >
+                                                                                        <div className="p-2 text-xs font-medium text-muted-foreground border-b bg-muted/50">
+                                                                                            {course.title}
+                                                                                        </div>
+                                                                                        <button
+                                                                                            className="w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2 text-destructive"
+                                                                                            onClick={() => {
+                                                                                                isBanned ? handleUnban(student.id, course.id) : handleBan(student.id, course.id);
+                                                                                            }}
+                                                                                        >
+                                                                                            {isBanned ? (
+                                                                                                <>
+                                                                                                    <CheckCircle className="h-4 w-4" /> Unban Student
+                                                                                                </>
+                                                                                            ) : (
+                                                                                                <>
+                                                                                                    <Ban className="h-4 w-4" /> Ban Student
+                                                                                                </>
+                                                                                            )}
+                                                                                        </button>
+                                                                                    </div>,
+                                                                                    document.body
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })
+                                                    ) : (
+                                                        <div className="text-xs text-muted-foreground italic">
+                                                            No enrolled courses
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <div className="flex items-center gap-2">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleViewStudent(student)}
+                                                        title="View Details"
+                                                        className="h-8 w-8 p-0"
+                                                    >
+                                                        <Eye className="h-4 w-4" />
+                                                    </Button>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleOpenEnrollmentDialog(student)}
+                                                        title="Enroll in Course"
+                                                        className="h-8 w-8 p-0"
+                                                    >
+                                                        <PlusCircle className="h-4 w-4 text-green-600" />
+                                                    </Button>
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })}
+                            </TableBody>
+                        </Table>
+                    )}
                 </CardContent>
             </Card>
 
             {/* Student Details Modal */}
             {selectedStudent && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-                    <div className="bg-background rounded-lg shadow-lg w-full max-w-2xl p-6 relative max-h-[80vh] overflow-y-auto">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+                    <div className="bg-background rounded-lg shadow-xl w-full max-w-4xl p-6 relative max-h-[90vh] overflow-y-auto border">
+                        {/* Close Button */}
                         <button
                             onClick={() => setSelectedStudent(null)}
-                            className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
+                            className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
                         >
                             <X className="h-5 w-5" />
                         </button>
 
                         <h2 className="text-2xl font-bold mb-6">Student Details</h2>
 
-                        <div className="space-y-6">
-                            {/* Basic Info */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="text-sm font-medium text-muted-foreground">Full Name</label>
-                                    <p className="text-lg font-medium">{selectedStudent.fullName || "N/A"}</p>
-                                </div>
-                                <div>
-                                    <label className="text-sm font-medium text-muted-foreground">Email</label>
-                                    <p className="text-lg">{selectedStudent.email}</p>
-                                </div>
-                                <div>
-                                    <label className="text-sm font-medium text-muted-foreground">College</label>
-                                    <p className="text-lg">{selectedStudent.college || "N/A"}</p>
-                                </div>
-                                <div>
-                                    <label className="text-sm font-medium text-muted-foreground">Joined Date</label>
-                                    <p>{selectedStudent.createdAt ? new Date(selectedStudent.createdAt).toLocaleDateString() : "Unknown"}</p>
-                                </div>
+                        {isModalLoading ? (
+                            <div className="flex flex-col items-center justify-center py-24 space-y-4">
+                                <Loader2 className="h-12 w-12 animate-spin text-primary" />
+                                <p className="text-muted-foreground font-medium animate-pulse">
+                                    Loading student progress data...
+                                </p>
                             </div>
-
-                            {/* Enrolled Courses */}
-                            <div>
-                                <label className="text-sm font-medium text-muted-foreground mb-3 block">Enrolled Courses</label>
-                                {studentCourses.length > 0 ? (
-                                    <div className="space-y-2">
-                                        {studentCourses.map(course => (
-                                            <div key={course.id} className="p-3 border rounded-md">
-                                                <div className="font-medium">{course.title}</div>
-                                                <div className="text-sm text-muted-foreground">
-                                                    {course.description?.substring(0, 100)}...
-                                                </div>
-                                            </div>
-                                        ))}
+                        ) : (
+                            <div className="space-y-8">
+                                {/* 1. Student Info Header */}
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-6">
+                                    <div>
+                                        <h3 className="text-2xl font-semibold text-foreground">
+                                            {selectedStudent.fullName || "Unnamed Student"}
+                                        </h3>
+                                        <p className="text-muted-foreground flex items-center gap-2">
+                                            <Mail className="h-4 w-4" />
+                                            {selectedStudent.email}
+                                        </p>
                                     </div>
-                                ) : (
-                                    <p className="text-muted-foreground">No courses enrolled</p>
-                                )}
-                            </div>
-
-                            {/* Progress Section (if permission exists) */}
-                            {canViewProgress && studentProgress.length > 0 && (
-                                <div>
-                                    <label className="text-sm font-medium text-muted-foreground mb-3 block">Course Progress</label>
-                                    <div className="space-y-3">
-                                        {studentProgress.map(progress => (
-                                            <div key={progress.courseId} className="p-3 border rounded-md">
-                                                <div className="flex justify-between items-start">
-                                                    <div className="font-medium">{progress.courseTitle}</div>
-                                                    <span className="text-sm font-medium text-primary">
-                                                        {progress.progressPercentage || 0}%
-                                                    </span>
-                                                </div>
-                                                <div className="mt-2">
-                                                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                                        <div
-                                                            className="h-full bg-primary rounded-full"
-                                                            style={{ width: `${progress.progressPercentage || 0}%` }}
-                                                        ></div>
-                                                    </div>
-                                                </div>
-                                                <div className="mt-2 text-sm text-muted-foreground">
-                                                    {progress.completedModules?.length || 0} modules completed
-                                                </div>
-                                                {progress.lastAccessed && (
-                                                    <div className="text-xs text-muted-foreground mt-1">
-                                                        Last accessed: {new Date(progress.lastAccessed).toLocaleDateString()}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
+                                    <div className="flex items-center gap-2">
+                                        {selectedStudent.isAssigned ? (
+                                            <Badge className="bg-blue-100 text-blue-800 border-blue-200 py-1 px-3">
+                                                <UserCheck className="h-3.5 w-3.5 mr-1.5" />
+                                                Assigned to You
+                                            </Badge>
+                                        ) : (
+                                            <Badge variant="outline" className="py-1 px-3">
+                                                Institution Student
+                                            </Badge>
+                                        )}
                                     </div>
                                 </div>
-                            )}
-                        </div>
 
-                        <div className="mt-8 flex justify-end">
-                            <Button onClick={() => setSelectedStudent(null)}>Close</Button>
-                        </div>
+                                {/* 2. Basic Info Grid */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-muted/30 p-4 rounded-xl">
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">College</label>
+                                        <p className="text-base font-medium">{selectedStudent.college || "Not specified"}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Account Created</label>
+                                        <p className="text-base font-medium">
+                                            {selectedStudent.createdAt ? new Date(selectedStudent.createdAt).toLocaleDateString() : "Unknown"}
+                                        </p>
+                                    </div>
+                                    {selectedStudent.isAssigned && selectedStudent.assignedDate && (
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Assigned Date</label>
+                                            <p className="text-base font-medium text-blue-700">
+                                                {new Date(selectedStudent.assignedDate).toLocaleDateString()}
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* 3. Enrolled Courses with Detailed Progress */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h4 className="text-lg font-bold flex items-center gap-2">
+                                            <BookOpen className="h-5 w-5 text-primary" />
+                                            Enrolled Courses ({studentCourses.length})
+                                        </h4>
+                                        <Button
+                                            size="sm"
+                                            onClick={() => handleOpenEnrollmentDialog(selectedStudent)}
+                                            className="gap-2"
+                                        >
+                                            <PlusCircle className="h-4 w-4" />
+                                            Enroll in Course
+                                        </Button>
+                                    </div>
+
+                                    {studentCourses.length > 0 ? (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            {studentCourses.map(course => {
+                                                const isAssignedCourse = courses.some(c => c.id === course.id);
+                                                const isBanned = selectedStudent.bannedFrom?.includes(course.id);
+                                                const progress = studentProgress.find(p => p.courseId === course.id);
+                                                const progressPercentage = progress?.progressPercentage || 0;
+
+                                                return (
+                                                    <div
+                                                        key={course.id}
+                                                        className={`group p-4 border rounded-xl transition-all duration-200 shadow-sm hover:shadow-md 
+                                                ${isBanned ? 'border-destructive/40 bg-destructive/5' : 'hover:border-primary bg-card'}
+                                            `}
+                                                    >
+                                                        <div className="flex justify-between items-start mb-2 gap-2">
+                                                            <div className="font-bold text-foreground leading-tight">
+                                                                {course.title}
+                                                            </div>
+                                                            <div className="flex shrink-0 gap-1">
+                                                                {isBanned ? (
+                                                                    <Badge variant="destructive" className="h-6">
+                                                                        <Ban className="h-3 w-3 mr-1" /> Banned
+                                                                    </Badge>
+                                                                ) : isAssignedCourse ? (
+                                                                    <Badge className="bg-blue-100 text-blue-800 h-6">Assigned</Badge>
+                                                                ) : null}
+                                                            </div>
+                                                        </div>
+
+                                                        {!isBanned ? (
+                                                            <div className="space-y-3 mt-4">
+                                                                <div className="flex justify-between text-sm items-end">
+                                                                    <span className="text-muted-foreground flex items-center gap-1.5">
+                                                                        <BarChart3 className="h-3.5 w-3.5" />
+                                                                        Completion
+                                                                    </span>
+                                                                    <span className="font-bold text-primary text-base">
+                                                                        {progressPercentage}%
+                                                                    </span>
+                                                                </div>
+
+                                                                {/* Progress Bar */}
+                                                                <div className="h-2.5 bg-secondary rounded-full overflow-hidden">
+                                                                    <div
+                                                                        className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
+                                                                        style={{ width: `${progressPercentage}%` }}
+                                                                    />
+                                                                </div>
+
+                                                                <div className="flex flex-col gap-1.5 pt-1">
+                                                                    <div className="flex justify-between text-xs font-medium">
+                                                                        <span className="text-muted-foreground">
+                                                                            {progress?.completedCount || 0} / {progress?.totalModules || course.totalModules || 0} Modules
+                                                                        </span>
+                                                                    </div>
+                                                                    {progress?.lastAccessed && (
+                                                                        <div className="text-[11px] text-muted-foreground italic flex items-center gap-1">
+                                                                            <Clock className="h-3 w-3" />
+                                                                            Last active: {new Date(progress.lastAccessed).toLocaleDateString()}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="mt-4 p-3 bg-destructive/10 rounded-lg text-sm text-destructive font-medium flex items-center gap-2">
+                                                                <AlertCircle className="h-4 w-4" />
+                                                                Access to this course has been restricted.
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-xl">
+                                            <GraduationCap className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                                            <p className="font-medium">No courses found for this student.</p>
+                                            <p className="text-sm mt-2">Enroll this student in a course to get started.</p>
+                                            <Button
+                                                onClick={() => handleOpenEnrollmentDialog(selectedStudent)}
+                                                className="mt-4 gap-2"
+                                            >
+                                                <UserPlus className="h-4 w-4" />
+                                                Enroll in Course
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* 4. Action Footer */}
+                                <div className="mt-8 flex flex-col sm:flex-row justify-between gap-3 border-t pt-6">
+                                    <div className="flex gap-2">
+                                        <Button
+                                            variant="outline"
+                                            onClick={() => handleOpenEnrollmentDialog(selectedStudent)}
+                                            className="gap-2"
+                                        >
+                                            <PlusCircle className="h-4 w-4" />
+                                            Enroll in Another Course
+                                        </Button>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            variant="outline"
+                                            onClick={() => setSelectedStudent(null)}
+                                        >
+                                            Close
+                                        </Button>
+                                        {selectedStudent.enrollmentCount > 0 && (
+                                            <Button className="shadow-sm gap-2">
+                                                <Eye className="h-4 w-4" />
+                                                View Full Progress Report
+                                            </Button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
