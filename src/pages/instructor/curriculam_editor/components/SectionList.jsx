@@ -15,6 +15,10 @@ import {
     duplicateSectionAsTemplate,
     deleteMultipleSections,
     duplicateMultipleSections,
+    updateSection,
+    updateSubSection,
+    deleteSubSection,
+    getSubSection
 } from "../../../../services/sectionService";
 import ModuleList from "./ModuleList";
 import SubSectionList from "./SubSectionList";
@@ -100,7 +104,7 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
         }
     };
 
-    // FIXED: Proper edit section function
+    // FIXED: Proper edit section function with Firebase integration
     const handleEditSection = async (section) => {
         try {
             const result = await showModal({
@@ -145,35 +149,19 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
             });
 
             if (result) {
-                // Check if parent component provides edit function
-                if (onEditSection) {
-                    await onEditSection(section.id, {
-                        ...section,
-                        title: result.title,
-                        description: result.description,
-                        objectives: result.objectives ? result.objectives.split(',').map(obj => obj.trim()).filter(obj => obj) : [],
-                        duration: result.duration
-                    });
-                } else {
-                    // Fallback to service call
-                    // Note: You need to implement updateSection in your service
-                    // await updateSection(courseId, section.id, {
-                    //     title: result.title,
-                    //     description: result.description,
-                    //     objectives: result.objectives ? result.objectives.split(',').map(obj => obj.trim()).filter(obj => obj) : [],
-                    //     duration: result.duration
-                    // });
-                    console.log("Update section data:", {
-                        courseId,
-                        sectionId: section.id,
-                        data: {
-                            title: result.title,
-                            description: result.description,
-                            objectives: result.objectives ? result.objectives.split(',').map(obj => obj.trim()).filter(obj => obj) : [],
-                            duration: result.duration
-                        }
-                    });
-                }
+                // Update section in Firebase
+                const updatedData = {
+                    title: result.title,
+                    description: result.description,
+                    objectives: result.objectives ?
+                        result.objectives.split(',').map(obj => obj.trim()).filter(obj => obj) :
+                        [],
+                    estimatedTime: parseDuration(result.duration || "60 min"),
+                    updatedAt: new Date().toISOString()
+                };
+
+                // Use the updateSection function from service
+                await updateSection(courseId, section.id, updatedData);
 
                 if (onRefreshSections) onRefreshSections();
                 toast({
@@ -238,7 +226,9 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
                     title: result.title,
                     duration: result.duration,
                     description: result.description,
-                    objectives: result.objectives ? result.objectives.split(',').map(obj => obj.trim()).filter(obj => obj) : []
+                    objectives: result.objectives ?
+                        result.objectives.split(',').map(obj => obj.trim()).filter(obj => obj) :
+                        []
                 });
 
                 if (onRefreshSections) onRefreshSections();
@@ -409,6 +399,7 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
         }
     };
 
+    // FIXED: Edit sub-section with Firebase integration
     const handleEditSubSection = async (sectionId, subSection) => {
         try {
             const result = await showModal({
@@ -453,12 +444,20 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
             });
 
             if (result) {
-                console.log("Update sub-section data:", {
-                    courseId,
-                    sectionId,
-                    subSectionId: subSection.id,
-                    data: result
-                });
+                // Update sub-section in Firebase
+                const updatedData = {
+                    title: result.title,
+                    duration: result.duration,
+                    description: result.description,
+                    objectives: result.objectives ?
+                        result.objectives.split(',').map(obj => obj.trim()).filter(obj => obj) :
+                        [],
+                    estimatedTime: parseDuration(result.duration || "60 min"),
+                    updatedAt: new Date().toISOString()
+                };
+
+                // Use updateSubSection function
+                await updateSubSection(courseId, sectionId, subSection.id, updatedData);
 
                 if (onRefreshSections) onRefreshSections();
                 toast({
@@ -471,12 +470,13 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
             console.error("Error editing sub-section:", error);
             toast({
                 title: "Error",
-                description: "Failed to edit sub-section",
+                description: error.message || "Failed to edit sub-section",
                 variant: "destructive",
             });
         }
     };
 
+    // FIXED: Delete sub-section with Firebase integration
     const handleDeleteSubSection = async (sectionId, subSectionId, subSectionTitle) => {
         try {
             const confirmed = await showConfirmModal({
@@ -488,7 +488,8 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
             });
 
             if (confirmed) {
-                console.log("Delete sub-section:", { courseId, sectionId, subSectionId });
+                // Use deleteSubSection function
+                await deleteSubSection(courseId, sectionId, subSectionId);
 
                 if (onRefreshSections) onRefreshSections();
                 toast({
@@ -501,12 +502,13 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
             console.error("Error deleting sub-section:", error);
             toast({
                 title: "Error",
-                description: "Failed to delete sub-section",
+                description: error.message || "Failed to delete sub-section",
                 variant: "destructive",
             });
         }
     };
 
+    // FIXED: Duplicate sub-section with Firebase integration
     const handleDuplicateSubSection = async (sectionId, subSection) => {
         try {
             const result = await showModal({
@@ -525,11 +527,28 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
             });
 
             if (result) {
-                console.log("Duplicate sub-section:", {
-                    sectionId,
-                    subSection,
-                    newTitle: result.title
-                });
+                // Get current sub-section data
+                const currentSubSection = await getSubSection(courseId, sectionId, subSection.id);
+
+                // Create new sub-section with modules
+                const newSubSection = {
+                    title: result.title,
+                    duration: currentSubSection.duration,
+                    description: currentSubSection.description,
+                    objectives: currentSubSection.objectives || [],
+                    modules: currentSubSection.modules ?
+                        currentSubSection.modules.map(module => ({
+                            ...module,
+                            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString()
+                        })) : [],
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+
+                // Add new sub-section
+                await addSubSection(courseId, sectionId, newSubSection);
 
                 if (onRefreshSections) onRefreshSections();
                 toast({
@@ -542,7 +561,78 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
             console.error("Error duplicating sub-section:", error);
             toast({
                 title: "Error",
-                description: "Failed to duplicate sub-section",
+                description: error.message || "Failed to duplicate sub-section",
+                variant: "destructive",
+            });
+        }
+    };
+
+    // UPDATED: Properly prepare module data before passing to onEditModule
+    const handleEditModule = async (moduleData) => {
+        const { sectionId, module, isNew, subSectionId } = moduleData;
+
+        console.log("Editing module:", {
+            sectionId,
+            moduleId: module.id,
+            isNew,
+            subSectionId,
+            moduleTitle: module.title,
+            moduleType: module.type,
+            content: module.content,
+            quizData: module.quizData ? `Has ${module.quizData.length} questions` : 'No quiz data',
+            moduleData: JSON.stringify(module, null, 2)
+        });
+
+        // For video modules: If content is just a video ID, convert it to full YouTube URL
+        if (module.type === 'video' && module.content) {
+            // Check if it's just a video ID (no URL)
+            if (!module.content.includes('youtube.com') && !module.content.includes('youtu.be')) {
+                // It's just a video ID, convert to full YouTube URL
+                module.content = `https://www.youtube.com/watch?v=${module.content}`;
+            }
+        }
+
+        // For quiz modules: Ensure quizData is properly structured
+        if (module.type === 'quiz') {
+            if (!module.quizData || !Array.isArray(module.quizData)) {
+                module.quizData = [];
+            }
+
+            // Ensure each question has proper structure
+            module.quizData = module.quizData.map((q, index) => ({
+                question: q.question || `Question ${index + 1}`,
+                points: q.points || 1,
+                options: q.options || ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+                correctOption: q.correctOption !== undefined ? q.correctOption : 0,
+                explanation: q.explanation || ''
+            }));
+
+            // For existing quizzes, we need to structure the data for the modal
+            // The modal expects quiz content in a specific format
+            if (!isNew && module.quizData.length > 0) {
+                // For quiz modules, the modal might expect content as JSON string
+                // or we need to pass quizData separately
+                console.log("Preparing quiz data for editing:", module.quizData);
+            }
+        }
+
+        // For text modules, ensure content is properly set
+        if (module.type === 'text' && !module.content) {
+            module.content = '';
+        }
+
+        // Simply pass through to the parent's onEditModule function
+        if (onEditModule) {
+            await onEditModule({
+                sectionId,
+                module,
+                isNew,
+                subSectionId
+            });
+        } else {
+            toast({
+                title: "Error",
+                description: "Module editing function not available",
                 variant: "destructive",
             });
         }
@@ -674,11 +764,39 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
 
         if (confirmed) {
             try {
-                toast({
-                    title: "Info",
-                    description: "This feature will be implemented soon",
-                    variant: "default",
+                // Get sections from Firebase
+                const emptySections = (sections || []).filter(section => {
+                    const hasModules = section.modules && section.modules.length > 0;
+                    const hasSubSections = section.subSections && section.subSections.length > 0;
+                    const hasSubSectionModules = section.subSections?.some(sub =>
+                        sub.modules && sub.modules.length > 0
+                    );
+                    return !hasModules && !hasSubSections && !hasSubSectionModules;
                 });
+
+                if (emptySections.length === 0) {
+                    toast({
+                        title: "Info",
+                        description: "No empty sections found",
+                        variant: "default",
+                    });
+                    return;
+                }
+
+                // Delete empty sections
+                const sectionIds = emptySections.map(s => s.id);
+                const result = await deleteMultipleSections(courseId, sectionIds, {
+                    confirm: false // Already confirmed
+                });
+
+                if (result.success) {
+                    if (onRefreshSections) onRefreshSections();
+                    toast({
+                        title: "Success",
+                        description: `Deleted ${result.deletedCount} empty section(s)`,
+                        variant: "default",
+                    });
+                }
             } catch (error) {
                 console.error("Error deleting empty sections:", error);
                 toast({
@@ -765,14 +883,41 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
         });
 
         if (confirmed) {
-            console.log(`Move section ${draggedSectionId} to position of ${targetSectionId}`);
+            try {
+                // Find sections
+                const draggedSection = sections.find(s => s.id === draggedSectionId);
+                const targetSection = sections.find(s => s.id === targetSectionId);
 
-            if (onRefreshSections) onRefreshSections();
-            toast({
-                title: "Success",
-                description: "Section moved successfully",
-                variant: "default",
-            });
+                if (!draggedSection || !targetSection) {
+                    throw new Error("Sections not found");
+                }
+
+                // Update order in Firebase
+                await updateSection(courseId, draggedSectionId, {
+                    order: targetSection.order,
+                    updatedAt: new Date().toISOString()
+                });
+
+                // Also update target section's order
+                await updateSection(courseId, targetSectionId, {
+                    order: draggedSection.order,
+                    updatedAt: new Date().toISOString()
+                });
+
+                if (onRefreshSections) onRefreshSections();
+                toast({
+                    title: "Success",
+                    description: "Section moved successfully",
+                    variant: "default",
+                });
+            } catch (error) {
+                console.error("Error moving section:", error);
+                toast({
+                    title: "Error",
+                    description: "Failed to move section",
+                    variant: "destructive",
+                });
+            }
         }
 
         setDragOverSection(null);
@@ -939,7 +1084,7 @@ export default function SectionList({ sections, courseId, onEditModule, onRefres
                             onDelete={() => handleDeleteSection(section.id, section.title)}
                             onDuplicate={() => handleDuplicateSection(section)}
                             onAddSubSection={() => handleAddSubSection(section.id, section.title)}
-                            onEditModule={onEditModule}
+                            onEditModule={handleEditModule}
                             onEditSubSection={(subSection) => handleEditSubSection(section.id, subSection)}
                             onDeleteSubSection={(subSectionId, subSectionTitle) => handleDeleteSubSection(section.id, subSectionId, subSectionTitle)}
                             onDuplicateSubSection={(subSection) => handleDuplicateSubSection(section.id, subSection)}
@@ -1367,7 +1512,8 @@ function SectionContent({
                                     id: Date.now().toString(),
                                     title: "",
                                     type,
-                                    content: ""
+                                    content: "",
+                                    quizData: type === 'quiz' ? [] : undefined
                                 },
                                 isNew: true
                             })}
@@ -1569,4 +1715,20 @@ function formatDate(dateString) {
         console.error('Error formatting date:', error);
         return '';
     }
+}
+
+// Helper function to parse duration
+function parseDuration(durationString) {
+    if (!durationString) return 60;
+
+    const match = durationString.match(/(\d+)\s*(min|minutes|hour|hours|h|m)/i);
+    if (!match) return 60;
+
+    const value = parseInt(match[1]);
+    const unit = match[2].toLowerCase();
+
+    if (unit.includes('hour') || unit === 'h') {
+        return value * 60;
+    }
+    return value; // minutes
 }

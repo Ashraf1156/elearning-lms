@@ -41,7 +41,14 @@ export default function AddSectionForm({ courseId, sectionsLength, onSectionAdde
         setAdding(true);
 
         try {
-            await addSection(courseId, newSectionTitle.trim(), sectionsLength);
+            // ✅ FIX: Pass an object with title property instead of just the title string
+            await addSection(courseId, {
+                title: newSectionTitle.trim(),
+                // You can add other properties here if needed
+                description: "",
+                duration: "60 min"
+            });
+
             setNewSectionTitle("");
             setShowSuggestions(false);
 
