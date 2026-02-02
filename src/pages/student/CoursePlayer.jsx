@@ -22,33 +22,37 @@ export default function CoursePlayer() {
     const [expandedSections, setExpandedSections] = useState({});
     const [expandedSubSections, setExpandedSubSections] = useState({});
 
-    // Add this useEffect to override the ContentProtection styles for sidebar
+    // Add CSS class to override ContentProtection for course player
     useEffect(() => {
-        const overrideStyles = `
-            .course-player-sidebar * {
-                user-select: auto !important;
-                -webkit-user-select: auto !important;
-                -moz-user-select: auto !important;
-                -ms-user-select: auto !important;
+        const styleSheet = document.createElement("style");
+        styleSheet.textContent = `
+            /* Override ContentProtection for course player */
+            .course-player * {
+                user-select: text !important;
+                -webkit-user-select: text !important;
+                -moz-user-select: text !important;
+                -ms-user-select: text !important;
+            }
+            
+            .course-player button,
+            .course-player a,
+            .course-player [role="button"] {
                 pointer-events: auto !important;
                 cursor: pointer !important;
             }
             
-            .course-player-sidebar button {
-                cursor: pointer !important;
-                pointer-events: auto !important;
+            /* Specifically target text content areas */
+            .course-player .prose *,
+            .course-player .selectable-text * {
+                user-select: text !important;
+                -webkit-user-select: text !important;
             }
             
-            .course-player-sidebar a,
-            .course-player-sidebar button,
-            .course-player-sidebar [role="button"] {
+            /* YouTube iframe protection */
+            .course-player iframe {
                 pointer-events: auto !important;
-                cursor: pointer !important;
             }
         `;
-
-        const styleSheet = document.createElement("style");
-        styleSheet.textContent = overrideStyles;
         document.head.appendChild(styleSheet);
 
         return () => {
@@ -182,17 +186,17 @@ export default function CoursePlayer() {
         return modules;
     };
 
-    if (loading) return <div>Loading player...</div>;
+    if (loading) return <div className="course-player">Loading player...</div>;
 
     return (
-        <div className="flex h-[calc(100vh-4rem)] -m-8">
+        <div className="course-player flex h-[calc(100vh-4rem)] -m-8">
             {/* Sidebar - Curriculum */}
             <div className={cn(
-                "w-80 border-r bg-card overflow-y-auto transition-all duration-300 absolute md:relative z-10 h-full course-player-sidebar",
+                "course-player-sidebar w-80 border-r bg-card overflow-y-auto transition-all duration-300 absolute md:relative z-10 h-full",
                 sidebarOpen ? "translate-x-0" : "-translate-x-full md:w-0 md:translate-x-0 md:overflow-hidden"
             )}>
-                <div className="p-4 border-b font-semibold text-lg truncate">
-                    {course.title}
+                <div className="p-4 border-b font-semibold text-lg truncate select-text">
+                    {course?.title || "Course"}
                 </div>
                 <div className="p-2">
                     {sections.map((section) => {
@@ -202,20 +206,22 @@ export default function CoursePlayer() {
                         return (
                             <div key={section.id} className="mb-2">
                                 {/* Section Header */}
-                                <div
+                                <button
                                     onClick={() => hasContent && toggleSection(section.id)}
                                     className={cn(
-                                        "flex items-center justify-between px-2 py-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider rounded-md cursor-pointer",
-                                        hasContent ? "hover:bg-muted/50" : "opacity-50"
+                                        "w-full flex items-center justify-between px-2 py-2 text-sm font-semibold text-muted-foreground uppercase tracking-wider rounded-md",
+                                        hasContent ? "hover:bg-muted/50 cursor-pointer" : "opacity-50 cursor-default",
+                                        "transition-colors"
                                     )}
+                                    disabled={!hasContent}
                                 >
-                                    <span className="truncate">{section.title}</span>
+                                    <span className="truncate select-text">{section.title}</span>
                                     {hasContent && (
                                         isExpanded ?
                                             <ChevronDown className="h-4 w-4 shrink-0" /> :
                                             <ChevronRight className="h-4 w-4 shrink-0" />
                                     )}
-                                </div>
+                                </button>
 
                                 {/* Section Content */}
                                 {isExpanded && hasContent && (
@@ -246,20 +252,22 @@ export default function CoursePlayer() {
                                             return (
                                                 <div key={subSection.id} className="space-y-1">
                                                     {/* SubSection Header */}
-                                                    <div
+                                                    <button
                                                         onClick={() => subHasContent && toggleSubSection(subSection.id)}
                                                         className={cn(
-                                                            "flex items-center justify-between px-2 py-1 text-xs font-medium text-foreground rounded-md cursor-pointer",
-                                                            subHasContent ? "hover:bg-muted/50" : "opacity-50"
+                                                            "w-full flex items-center justify-between px-2 py-1 text-xs font-medium text-foreground rounded-md",
+                                                            subHasContent ? "hover:bg-muted/50 cursor-pointer" : "opacity-50 cursor-default",
+                                                            "transition-colors"
                                                         )}
+                                                        disabled={!subHasContent}
                                                     >
-                                                        <span className="truncate text-xs">{subSection.title}</span>
+                                                        <span className="truncate select-text text-xs">{subSection.title}</span>
                                                         {subHasContent && (
                                                             isSubExpanded ?
                                                                 <ChevronDown className="h-3 w-3 shrink-0" /> :
                                                                 <ChevronRight className="h-3 w-3 shrink-0" />
                                                         )}
-                                                    </div>
+                                                    </button>
 
                                                     {/* SubSection Modules */}
                                                     {isSubExpanded && subSection.modules?.length > 0 && (
@@ -293,10 +301,15 @@ export default function CoursePlayer() {
             {/* Main Content */}
             <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                 <div className="p-4 border-b flex items-center gap-4">
-                    <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setSidebarOpen(!sidebarOpen)}
+                        className="pointer-events-auto cursor-pointer"
+                    >
                         <Menu className="h-5 w-5" />
                     </Button>
-                    <h2 className="font-semibold text-lg line-clamp-1 flex-1">
+                    <h2 className="font-semibold text-lg line-clamp-1 flex-1 select-text">
                         {activeModule?.title || "Select a lesson"}
                     </h2>
                     {activeModule && (
@@ -304,7 +317,7 @@ export default function CoursePlayer() {
                             variant={completedModules.includes(activeModule.id) ? "outline" : "default"}
                             size="sm"
                             onClick={handleToggleComplete}
-                            className="gap-2"
+                            className="gap-2 pointer-events-auto cursor-pointer"
                         >
                             {completedModules.includes(activeModule.id) ? (
                                 <>
@@ -321,13 +334,14 @@ export default function CoursePlayer() {
                 <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-muted/20">
                     <div className="max-w-4xl mx-auto">
                         {activeModule ? (
-                            <Card>
+                            <Card className="selectable-text">
                                 <CardContent className="p-6">
                                     {activeModule.type === 'video' && (
                                         <div className="aspect-video bg-black rounded-md overflow-hidden">
                                             <iframe
                                                 src={getYouTubeEmbedUrl(activeModule.content)}
-                                                className="w-full h-full"
+                                                className="w-full h-full pointer-events-auto"
+                                                title="Course video"
                                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                                                 allowFullScreen
                                             />
@@ -335,9 +349,9 @@ export default function CoursePlayer() {
                                     )}
 
                                     {activeModule.type === 'text' && (
-                                        <div className="prose dark:prose-invert max-w-none">
+                                        <div className="prose dark:prose-invert max-w-none select-text">
                                             <div
-                                                className="whitespace-pre-wrap font-sans select-text"
+                                                className="whitespace-pre-wrap font-sans select-text pointer-events-auto"
                                                 dangerouslySetInnerHTML={{ __html: activeModule.content }}
                                             />
                                         </div>
@@ -349,7 +363,7 @@ export default function CoursePlayer() {
                                 </CardContent>
                             </Card>
                         ) : (
-                            <div className="flex items-center justify-center h-full text-muted-foreground">
+                            <div className="flex items-center justify-center h-full text-muted-foreground select-text">
                                 Select a module from the sidebar to start learning.
                             </div>
                         )}
@@ -366,7 +380,7 @@ function ModuleButton({ module, activeModule, completedModules, onClick, indentL
         <button
             onClick={onClick}
             className={cn(
-                "w-full flex items-center gap-3 px-3 py-2 text-sm rounded-md transition-colors text-left",
+                "w-full flex items-center gap-3 px-3 py-2 text-sm rounded-md transition-colors text-left pointer-events-auto cursor-pointer",
                 activeModule?.id === module.id
                     ? "bg-primary text-primary-foreground"
                     : "hover:bg-muted",
@@ -384,7 +398,10 @@ function ModuleButton({ module, activeModule, completedModules, onClick, indentL
                     </>
                 )}
             </div>
-            <span className={cn("line-clamp-1 flex-1", completedModules.includes(module.id) && "line-through text-muted-foreground")}>
+            <span className={cn(
+                "line-clamp-1 flex-1 select-text",
+                completedModules.includes(module.id) && "line-through text-muted-foreground"
+            )}>
                 {module.title}
             </span>
         </button>
@@ -420,30 +437,6 @@ function getYouTubeEmbedUrl(url) {
     return "";
 }
 
-// Remove or update renderContentWithLinks since we're using dangerouslySetInnerHTML
-// function renderContentWithLinks(text) {
-//     if (!text) return null;
-//     const urlRegex = /(https?:\/\/[^\s]+)/g;
-//     const parts = text.split(urlRegex);
-//     return parts.map((part, index) => {
-//         if (part.match(urlRegex)) {
-//             return (
-//                 <a
-//                     key={index}
-//                     href={part}
-//                     target="_blank"
-//                     rel="noopener noreferrer"
-//                     className="text-primary underline hover:text-primary/80 cursor-pointer pointer-events-auto"
-//                     onClick={(e) => e.stopPropagation()}
-//                 >
-//                     {part}
-//                 </a>
-//             );
-//         }
-//         return part;
-//     });
-// }
-
 function QuizPlayer({ module }) {
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [selectedOption, setSelectedOption] = useState(null);
@@ -476,26 +469,39 @@ function QuizPlayer({ module }) {
 
     if (!quizStarted) {
         return (
-            <div className="text-center py-12">
+            <div className="text-center py-12 select-text">
                 <HelpCircle className="h-16 w-16 mx-auto mb-6 text-primary" />
                 <h3 className="text-2xl font-bold mb-4">{module.title}</h3>
                 <p className="text-muted-foreground mb-8">
                     This quiz contains {questions.length} questions.
                 </p>
-                <Button onClick={handleStart} size="lg" disabled={questions.length === 0}>Start Quiz</Button>
+                <Button
+                    onClick={handleStart}
+                    size="lg"
+                    disabled={questions.length === 0}
+                    className="pointer-events-auto cursor-pointer"
+                >
+                    Start Quiz
+                </Button>
             </div>
         );
     }
 
     if (showResult) {
         return (
-            <div className="text-center py-12">
+            <div className="text-center py-12 select-text">
                 <CheckCircle className="h-16 w-16 mx-auto mb-6 text-green-500" />
                 <h3 className="text-2xl font-bold mb-4">Quiz Completed!</h3>
                 <p className="text-lg mb-8">
                     You scored {score} out of {questions.length}
                 </p>
-                <Button onClick={handleStart} variant="outline">Retake Quiz</Button>
+                <Button
+                    onClick={handleStart}
+                    variant="outline"
+                    className="pointer-events-auto cursor-pointer"
+                >
+                    Retake Quiz
+                </Button>
             </div>
         );
     }
@@ -503,7 +509,7 @@ function QuizPlayer({ module }) {
     const question = questions[currentQuestionIndex];
 
     return (
-        <div className="max-w-2xl mx-auto py-8">
+        <div className="max-w-2xl mx-auto py-8 select-text">
             <div className="mb-8 flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">
                     Question {currentQuestionIndex + 1} of {questions.length}
@@ -519,7 +525,7 @@ function QuizPlayer({ module }) {
                         key={idx}
                         onClick={() => setSelectedOption(idx)}
                         className={cn(
-                            "w-full p-4 text-left rounded-lg border transition-all",
+                            "w-full p-4 text-left rounded-lg border transition-all pointer-events-auto cursor-pointer",
                             selectedOption === idx
                                 ? "border-primary bg-primary/10 ring-1 ring-primary"
                                 : "hover:bg-muted"
@@ -531,7 +537,11 @@ function QuizPlayer({ module }) {
             </div>
 
             <div className="flex justify-end">
-                <Button onClick={handleNext} disabled={selectedOption === null}>
+                <Button
+                    onClick={handleNext}
+                    disabled={selectedOption === null}
+                    className="pointer-events-auto cursor-pointer"
+                >
                     {currentQuestionIndex + 1 === questions.length ? "Finish" : "Next Question"}
                 </Button>
             </div>

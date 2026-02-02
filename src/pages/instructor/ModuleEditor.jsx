@@ -21,15 +21,16 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
         tags: [],
         objectives: [],
         // Quiz specific fields
+        quizData: [],
         quizQuestions: [],
         ...initialData // Spread initialData last to override defaults
     });
 
     const [loading, setLoading] = useState(false);
-    const [videoUrl, setVideoUrl] = useState(initialData?.content || "");
+    const [videoUrl, setVideoUrl] = useState("");
 
     // Quiz State - Initialize properly
-    const [quizQuestions, setQuizQuestions] = useState(initialData?.quizQuestions || initialData?.quizData || []);
+    const [quizQuestions, setQuizQuestions] = useState([]);
     const [currentQuestion, setCurrentQuestion] = useState({
         question: "",
         options: ["", "", "", ""],
@@ -39,30 +40,45 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
     // Update state when initialData changes
     useEffect(() => {
         if (initialData) {
-            setModule(prev => ({
-                ...prev,
-                ...initialData,
-                // Ensure all fields exist
-                title: initialData.title || "",
-                type: initialData.type || "text",
-                content: initialData.content || "",
-                duration: initialData.duration || "10 min",
-                description: initialData.description || "",
-                isActive: initialData.isActive !== false,
-                videoUrl: initialData.videoUrl || "",
-                transcript: initialData.transcript || "",
-                attachments: initialData.attachments || [],
-                tags: initialData.tags || [],
-                objectives: initialData.objectives || [],
-                quizQuestions: initialData.quizQuestions || initialData.quizData || []
-            }));
+            // Handle nested module structure (data.module.module)
+            let actualModuleData = initialData;
 
-            if (initialData.type === 'video') {
-                setVideoUrl(initialData.content || "");
+            // Check if data is nested in module object
+            if (initialData.module && initialData.module.module) {
+                actualModuleData = initialData.module.module;
+            } else if (initialData.module) {
+                actualModuleData = initialData.module;
             }
 
-            if (initialData.type === 'quiz') {
-                setQuizQuestions(initialData.quizQuestions || initialData.quizData || []);
+            console.log("Extracted module data:", actualModuleData);
+
+            setModule(prev => ({
+                ...prev,
+                ...actualModuleData,
+                // Ensure all fields exist
+                title: actualModuleData.title || "",
+                type: actualModuleData.type || "text",
+                content: actualModuleData.content || "",
+                duration: actualModuleData.duration || "10 min",
+                description: actualModuleData.description || "",
+                isActive: actualModuleData.isActive !== false,
+                videoUrl: actualModuleData.videoUrl || "",
+                transcript: actualModuleData.transcript || "",
+                attachments: actualModuleData.attachments || [],
+                tags: actualModuleData.tags || [],
+                objectives: actualModuleData.objectives || [],
+                quizData: actualModuleData.quizData || [],
+                quizQuestions: actualModuleData.quizQuestions || []
+            }));
+
+            if (actualModuleData.type === 'video') {
+                setVideoUrl(actualModuleData.content || actualModuleData.videoUrl || "");
+            }
+
+            if (actualModuleData.type === 'quiz') {
+                // Use quizData from the module or initialize empty array
+                const questions = actualModuleData.quizData || actualModuleData.quizQuestions || [];
+                setQuizQuestions(questions);
             }
         }
     }, [initialData]);
@@ -87,10 +103,24 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
     };
 
     const handleAddQuestion = () => {
-        if (!currentQuestion.question.trim()) return;
-        const newQuestions = [...quizQuestions, currentQuestion];
+        if (!currentQuestion.question.trim()) {
+            alert("Please enter a question");
+            return;
+        }
+
+        // Check if all options are filled
+        if (currentQuestion.options.some(opt => !opt.trim())) {
+            alert("Please fill all options");
+            return;
+        }
+
+        const newQuestions = [...quizQuestions, { ...currentQuestion }];
         setQuizQuestions(newQuestions);
-        setCurrentQuestion({ question: "", options: ["", "", "", ""], correctOption: 0 });
+        setCurrentQuestion({
+            question: "",
+            options: ["", "", "", ""],
+            correctOption: 0
+        });
     };
 
     const handleRemoveQuestion = (index) => {
@@ -103,14 +133,21 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
 
         try {
             let content = module.content || "";
-            let finalQuizQuestions = null;
+            let finalQuizData = null;
 
             if (module.type === 'video') {
                 content = videoUrl || module.content || "";
             }
 
             if (module.type === 'quiz') {
-                finalQuizQuestions = quizQuestions.map(q => ({
+                // Validate quiz has questions
+                if (quizQuestions.length === 0) {
+                    alert("Please add at least one quiz question");
+                    setLoading(false);
+                    return;
+                }
+
+                finalQuizData = quizQuestions.map(q => ({
                     question: q.question || "",
                     options: q.options || ["", "", "", ""],
                     correctOption: q.correctOption || 0
@@ -127,15 +164,21 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
                 duration: module.duration || "10 min",
                 description: module.description || "",
                 isActive: module.isActive !== false,
-                // Include all fields with defaults
+                // Include common fields
                 videoUrl: module.videoUrl || "",
                 transcript: module.transcript || "",
                 attachments: module.attachments || [],
                 tags: module.tags || [],
                 objectives: module.objectives || [],
-                // Only include quiz data if it's a quiz
-                ...(module.type === 'quiz' && { quizQuestions: finalQuizQuestions }),
-                // Remove undefined fields
+                // Include quizData for backward compatibility
+                ...(module.type === 'quiz' && {
+                    quizData: finalQuizData,
+                    quizQuestions: finalQuizData
+                }),
+                // Preserve existing fields if they exist
+                ...(module.createdAt && { createdAt: module.createdAt }),
+                ...(module.updatedAt && { updatedAt: new Date().toISOString() }),
+                ...(module.order !== undefined && { order: module.order }),
             };
 
             // Clean up the data - remove any undefined or null values
@@ -158,9 +201,9 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
             <div className="bg-background w-full max-w-lg rounded-lg shadow-lg p-6 max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-bold">
-                        {module.type === 'video' && (initialData?.id ? "Edit Video Lesson" : "Add Video Lesson")}
-                        {module.type === 'text' && (initialData?.id ? "Edit Text Lesson" : "Add Text Lesson")}
-                        {module.type === 'quiz' && (initialData?.id ? "Edit Quiz" : "Add Quiz")}
+                        {module.type === 'video' && (module.id ? "Edit Video Lesson" : "Add Video Lesson")}
+                        {module.type === 'text' && (module.id ? "Edit Text Lesson" : "Add Text Lesson")}
+                        {module.type === 'quiz' && (module.id ? "Edit Quiz" : "Add Quiz")}
                     </h2>
                     <Button variant="ghost" size="sm" onClick={onClose}>
                         <X className="h-4 w-4" />
@@ -169,7 +212,7 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
 
                 <form onSubmit={handleSave} className="space-y-4">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium">Title</label>
+                        <label className="text-sm font-medium">Title *</label>
                         <Input
                             required
                             value={module.title}
@@ -180,13 +223,14 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
 
                     {module.type === 'video' && (
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">YouTube Video URL</label>
+                            <label className="text-sm font-medium">YouTube Video URL *</label>
                             <Input
+                                required
                                 value={videoUrl}
                                 onChange={(e) => setVideoUrl(e.target.value)}
                                 placeholder="https://www.youtube.com/watch?v=..."
                             />
-                            {(videoUrl) && (
+                            {videoUrl && (
                                 <p className="text-xs text-muted-foreground break-all">
                                     Video URL: {videoUrl}
                                 </p>
@@ -196,22 +240,26 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
 
                     {module.type === 'text' && (
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">Content (Markdown)</label>
+                            <label className="text-sm font-medium">Content *</label>
                             <textarea
                                 className="flex min-h-[200px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                required
                                 value={module.content}
                                 onChange={(e) => setModule({ ...module, content: e.target.value })}
                                 placeholder="# Lesson Content..."
                             />
+                            <p className="text-xs text-muted-foreground">
+                                Supports HTML content. For images, use &lt;img&gt; tags with URLs.
+                            </p>
                         </div>
                     )}
 
                     {module.type === 'quiz' && (
                         <div className="space-y-4">
                             <div className="border p-4 rounded-md space-y-4">
-                                <h3 className="font-semibold">Add Question</h3>
+                                <h3 className="font-semibold">Add Question *</h3>
                                 <Input
-                                    placeholder="Question Text"
+                                    placeholder="Question Text *"
                                     value={currentQuestion.question}
                                     onChange={(e) => setCurrentQuestion({ ...currentQuestion, question: e.target.value })}
                                 />
@@ -223,9 +271,11 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
                                                 name="correctOption"
                                                 checked={currentQuestion.correctOption === idx}
                                                 onChange={() => setCurrentQuestion({ ...currentQuestion, correctOption: idx })}
+                                                className="h-4 w-4"
                                             />
                                             <Input
-                                                placeholder={`Option ${idx + 1}`}
+                                                placeholder={`Option ${idx + 1} *`}
+                                                required
                                                 value={opt}
                                                 onChange={(e) => {
                                                     const newOptions = [...currentQuestion.options];
@@ -236,16 +286,28 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
                                         </div>
                                     ))}
                                 </div>
-                                <Button type="button" onClick={handleAddQuestion} size="sm">Add Question</Button>
+                                <Button type="button" onClick={handleAddQuestion} size="sm">
+                                    Add Question
+                                </Button>
                             </div>
 
                             <div className="space-y-2">
-                                <h3 className="font-semibold">Questions ({quizQuestions.length})</h3>
+                                <h3 className="font-semibold">
+                                    Questions ({quizQuestions.length})
+                                    {quizQuestions.length === 0 && (
+                                        <span className="text-red-500 text-sm ml-2">* At least one question is required</span>
+                                    )}
+                                </h3>
                                 {quizQuestions.map((q, idx) => (
-                                    <div key={idx} className="flex justify-between items-center bg-muted p-2 rounded">
+                                    <div key={idx} className="flex justify-between items-center bg-muted p-3 rounded">
                                         <div className="flex-1">
-                                            <span className="font-medium">{idx + 1}.</span>
-                                            <span className="ml-2">{q.question}</span>
+                                            <div className="font-medium">
+                                                <span className="text-sm">{idx + 1}.</span>
+                                                <span className="ml-2">{q.question}</span>
+                                            </div>
+                                            <div className="text-xs text-muted-foreground mt-1">
+                                                Correct: {q.options[q.correctOption]}
+                                            </div>
                                         </div>
                                         <Button
                                             type="button"
@@ -262,10 +324,15 @@ export default function ModuleEditor({ isOpen, onClose, onSave, initialData }) {
                     )}
 
                     <div className="flex justify-end gap-2 pt-4">
-                        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-                        <Button type="submit" disabled={loading}>
+                        <Button type="button" variant="outline" onClick={onClose}>
+                            Cancel
+                        </Button>
+                        <Button
+                            type="submit"
+                            disabled={loading || (module.type === 'quiz' && quizQuestions.length === 0)}
+                        >
                             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            {initialData?.id ? "Update" : "Save"} Module
+                            {module.id ? "Update" : "Save"} Module
                         </Button>
                     </div>
                 </form>

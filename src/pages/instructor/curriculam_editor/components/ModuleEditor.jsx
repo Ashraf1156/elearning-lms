@@ -10,20 +10,61 @@ import { saveModule, debugFindModule } from "../../../../services/moduleService"
 import { getAuth } from "firebase/auth";
 
 export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) {
-    console.log("📋 ModuleEditor received data:", JSON.stringify(moduleData, null, 2));
-    console.log("📋 Module content in props:", moduleData?.module?.content);
+    console.log("📋 ModuleEditor received data:", moduleData);
+    console.log("📋 Raw moduleData structure:", JSON.stringify(moduleData, null, 2));
 
-    // IMPORTANT: Parse the moduleData string if it exists
-    let parsedModuleData = null;
-    if (moduleData?.moduleData && typeof moduleData.moduleData === 'string') {
-        try {
-            parsedModuleData = JSON.parse(moduleData.moduleData);
-            console.log("📋 Parsed moduleData:", parsedModuleData);
-            console.log("📋 Parsed quizData:", parsedModuleData.quizData);
-        } catch (error) {
-            console.error("❌ Failed to parse moduleData:", error);
+    // Get the actual module data from the nested structure
+    const extractModuleData = (data) => {
+        if (!data) return null;
+
+        // Handle nested structure: moduleData.module.module
+        if (data.module && data.module.module) {
+            console.log("📋 Found nested module structure: data.module.module");
+            return data.module.module;
         }
-    }
+        // Handle direct module property
+        else if (data.module) {
+            console.log("📋 Found direct module property: data.module");
+            return data.module;
+        }
+        // Handle moduleData string
+        else if (typeof data === 'string') {
+            try {
+                const parsed = JSON.parse(data);
+                console.log("📋 Parsed string moduleData:", parsed);
+                return extractModuleData(parsed); // Recursively extract
+            } catch (error) {
+                console.error("❌ Failed to parse moduleData string:", error);
+                return null;
+            }
+        }
+        // Already flat module data
+        else if (data.id || data.type) {
+            console.log("📋 Already flat module data");
+            return data;
+        }
+        // Legacy format with moduleData property
+        else if (data.moduleData) {
+            try {
+                if (typeof data.moduleData === 'string') {
+                    const parsed = JSON.parse(data.moduleData);
+                    console.log("📋 Parsed moduleData property:", parsed);
+                    return parsed;
+                }
+                return data.moduleData;
+            } catch (error) {
+                console.error("❌ Failed to parse moduleData:", error);
+                return null;
+            }
+        }
+
+        return null;
+    };
+
+    const extractedModule = extractModuleData(moduleData);
+    console.log("📋 Extracted module:", extractedModule);
+    console.log("📋 Extracted module content:", extractedModule?.content);
+    console.log("📋 Extracted module quizData:", extractedModule?.quizData);
 
     const [module, setModule] = useState({
         id: Date.now().toString(),
@@ -39,12 +80,13 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
     const [showRichTextEditor, setShowRichTextEditor] = useState(false);
     const [initialized, setInitialized] = useState(false);
 
-    // FIXED: Handle both direct module data and parsed moduleData
+    // FIXED: Handle extracted module data properly
     useEffect(() => {
-        console.log("🔄 useEffect triggered with moduleData:", moduleData);
+        console.log("🔄 useEffect triggered with extractedModule:", extractedModule);
+        console.log("🔄 moduleData:", moduleData);
 
-        if (!moduleData) {
-            console.log("No moduleData, resetting form");
+        if (!extractedModule && !moduleData) {
+            console.log("No data, resetting form for new module");
             setModule({
                 id: Date.now().toString(),
                 title: "",
@@ -58,55 +100,35 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
             return;
         }
 
-        // Try to get module from different sources in order of priority
-        let moduleToEdit = null;
+        // Determine if we're editing or creating new
+        const isEditing = Boolean(extractedModule?.id || moduleData?.isNew === false);
+        console.log("Is editing?", isEditing);
 
-        // Source 1: parsedModuleData (from moduleData string)
-        if (parsedModuleData) {
-            moduleToEdit = parsedModuleData;
-            console.log("📥 Using parsed module data:", moduleToEdit);
-        }
-        // Source 2: direct module object
-        else if (moduleData.module) {
-            moduleToEdit = moduleData.module;
-            console.log("📥 Using direct module object:", moduleToEdit);
-        }
-        // Source 3: individual properties
-        else {
-            moduleToEdit = {
-                id: moduleData.moduleId || Date.now().toString(),
-                title: moduleData.moduleTitle || "",
-                type: moduleData.moduleType || "text",
-                content: moduleData.content || "",
-                quizData: moduleData.quizData || []
-            };
-            console.log("📥 Using individual properties:", moduleToEdit);
-        }
+        if (isEditing && extractedModule) {
+            console.log("📥 EDITING EXISTING MODULE:", extractedModule);
 
-        if (moduleToEdit) {
-            console.log("📥 Setting module from moduleToEdit:");
-            console.log("Module ID:", moduleToEdit.id);
-            console.log("Module title:", moduleToEdit.title);
-            console.log("Module type:", moduleToEdit.type);
-            console.log("Module content:", moduleToEdit.content);
-            console.log("Module quizData:", moduleToEdit.quizData);
-            console.log("Quiz data is array?", Array.isArray(moduleToEdit.quizData));
-            console.log("Quiz data length:", moduleToEdit.quizData?.length || 0);
-
-            // For quiz modules, ensure quizData is properly initialized
+            // Process quiz data for quiz modules
             let quizData = [];
-            if (moduleToEdit.type === 'quiz') {
-                if (moduleToEdit.quizData && Array.isArray(moduleToEdit.quizData)) {
-                    quizData = moduleToEdit.quizData.map(q => ({
+            if (extractedModule.type === 'quiz') {
+                if (extractedModule.quizData && Array.isArray(extractedModule.quizData)) {
+                    quizData = extractedModule.quizData.map(q => ({
                         question: q.question || "",
                         points: q.points || 1,
                         options: Array.isArray(q.options) ? q.options.map(opt => opt || "") : ['', '', '', ''],
                         correctOption: q.correctOption !== undefined ? q.correctOption : 0,
                         explanation: q.explanation || ""
                     }));
-                    console.log("📥 Processed quizData:", quizData);
+                    console.log("📥 Processed quizData for editing:", quizData);
+                } else if (extractedModule.quizQuestions) {
+                    // Handle quizQuestions as alternative
+                    quizData = extractedModule.quizQuestions.map(q => ({
+                        question: q.question || "",
+                        points: q.points || 1,
+                        options: q.options || ['', '', '', ''],
+                        correctOption: q.correctOption !== undefined ? q.correctOption : 0,
+                        explanation: q.explanation || ""
+                    }));
                 } else {
-                    // If no quizData exists, create a default question
                     quizData = [{
                         question: "",
                         points: 1,
@@ -114,41 +136,42 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                         correctOption: 0,
                         explanation: ""
                     }];
-                    console.log("📥 Created default quizData:", quizData);
                 }
             }
 
             const newModuleState = {
-                id: moduleToEdit.id || Date.now().toString(),
-                title: moduleToEdit.title || "",
-                type: moduleToEdit.type || "text",
-                content: moduleToEdit.content || "",
-                order: moduleToEdit.order || 0,
+                id: extractedModule.id || Date.now().toString(),
+                title: extractedModule.title || "",
+                type: extractedModule.type || "text",
+                content: extractedModule.content || "",
+                order: extractedModule.order || 0,
                 quizData: quizData
             };
 
-            console.log("📥 New module state with quizData:", newModuleState);
+            console.log("📥 Setting module state for editing:", newModuleState);
             setModule(newModuleState);
 
-            // Also update videoUrl if it's a video module
-            if (moduleToEdit.type === 'video' && moduleToEdit.content) {
-                console.log("📥 Setting video URL:", moduleToEdit.content);
-                setVideoUrl(moduleToEdit.content);
+            // Handle video URL
+            if (extractedModule.type === 'video') {
+                const videoContent = extractedModule.content || extractedModule.videoUrl || "";
+                console.log("📥 Setting video URL:", videoContent);
+                setVideoUrl(videoContent);
             } else {
                 setVideoUrl("");
             }
-
-            setInitialized(true);
         } else {
-            // For new modules
-            console.log("📥 Setting up new module with type:", moduleData.type || moduleData.moduleType || "text");
+            // CREATING NEW MODULE
+            console.log("📥 CREATING NEW MODULE");
+            const moduleType = extractedModule?.type || moduleData?.type || moduleData?.moduleType || "text";
+            console.log("📥 New module type:", moduleType);
+
             const newModule = {
                 id: Date.now().toString(),
                 title: "",
-                type: moduleData.type || moduleData.moduleType || "text",
+                type: moduleType,
                 content: "",
                 order: 0,
-                quizData: (moduleData.type === 'quiz' || moduleData.moduleType === 'quiz') ? [{
+                quizData: moduleType === 'quiz' ? [{
                     question: "",
                     points: 1,
                     options: ['', '', '', ''],
@@ -156,12 +179,14 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                     explanation: ""
                 }] : []
             };
-            console.log("📥 New module:", newModule);
+
+            console.log("📥 New module state:", newModule);
             setModule(newModule);
             setVideoUrl("");
-            setInitialized(true);
         }
-    }, [moduleData, parsedModuleData]);
+
+        setInitialized(true);
+    }, [extractedModule, moduleData]);
 
     // Debug: Log current module state
     useEffect(() => {
@@ -173,7 +198,8 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                 contentLength: module.content?.length || 0,
                 contentPreview: module.content?.substring(0, 100),
                 quizData: module.quizData,
-                quizDataLength: module.quizData?.length || 0
+                quizDataLength: module.quizData?.length || 0,
+                isNew: moduleData?.isNew
             });
             console.log("📊 Current videoUrl:", videoUrl);
         }
@@ -186,17 +212,12 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
         e.stopPropagation();
 
         console.log("💾 SAVE CLICKED - Starting save process...");
-        console.log("📤 Module data to save:", {
+        console.log("📤 Save context:", {
             courseId,
             sectionId: moduleData?.sectionId,
             subSectionId: moduleData?.subSectionId,
-            module: {
-                ...module,
-                contentLength: module.content?.length || 0,
-                quizDataLength: module.quizData?.length || 0
-            },
             isNew: moduleData?.isNew,
-            videoUrl
+            moduleId: module.id
         });
 
         const auth = getAuth();
@@ -241,40 +262,50 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
             }
         }
 
-        if (!module.content.trim() && module.type === 'text') {
-            if (!confirm("Content is empty. Save anyway?")) {
-                return;
-            }
+        // Validate video modules
+        if (module.type === 'video' && !videoUrl.trim()) {
+            alert("Please enter a YouTube video URL");
+            return;
         }
 
         setLoading(true);
 
         try {
-            console.log("📤 Attempting to save module...");
+            console.log("📤 Preparing module data for saving...");
 
             // Prepare module data for saving
             const moduleToSave = {
-                ...module,
-                // For video modules, use the videoUrl
-                content: module.type === 'video' ? (videoUrl || module.content) : module.content,
-                // Ensure quizData is included for quiz modules
-                ...(module.type === 'quiz' && { quizData: module.quizData }),
+                id: module.id,
+                title: module.title.trim(),
+                type: module.type,
+                content: module.type === 'video' ? videoUrl.trim() : (module.content || ""),
+                order: module.order || 0,
+                ...(module.type === 'quiz' && {
+                    quizData: module.quizData,
+                    quizQuestions: module.quizData // For backward compatibility
+                }),
                 updatedAt: new Date().toISOString()
             };
 
-            if (moduleData?.isNew) {
+            // Add createdAt for new modules
+            if (moduleData?.isNew !== false) {
                 moduleToSave.createdAt = new Date().toISOString();
             }
 
             console.log("📤 Module to save:", moduleToSave);
 
-            const savedModule = await saveModule({
+            // Call the save function with proper structure
+            const savePayload = {
                 courseId,
                 sectionId: moduleData?.sectionId,
                 subSectionId: moduleData?.subSectionId,
                 module: moduleToSave,
-                isNew: moduleData?.isNew
-            });
+                isNew: moduleData?.isNew !== false
+            };
+
+            console.log("📤 Save payload:", savePayload);
+
+            const savedModule = await saveModule(savePayload);
 
             console.log("✅ Module saved successfully:", savedModule);
 
@@ -282,38 +313,52 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
             alert("Module saved successfully!");
 
             // Call onClose to close the modal
-            onClose();
-
-            // Optional: Trigger a custom event to refresh parent component
-            window.dispatchEvent(new CustomEvent('module-saved', {
-                detail: {
-                    courseId,
-                    sectionId: moduleData?.sectionId,
-                    subSectionId: moduleData?.subSectionId,
-                    module: savedModule
-                }
-            }));
+            onClose(savedModule);
 
         } catch (error) {
             console.error("❌ Error saving module:", error);
-            console.error("Error details:", {
-                code: error.code,
-                message: error.message,
-                stack: error.stack
-            });
             alert(`Failed to save module: ${error.message}`);
         } finally {
             setLoading(false);
         }
     };
 
+    // Get section info for display
+    const sectionInfo = moduleData?.sectionId ?
+        `Section: ${moduleData.sectionId}${moduleData?.subSectionId ? ` / Sub-section: ${moduleData.subSectionId}` : ''}` :
+        'No section specified';
+
     return (
         <Modal isOpen={isOpen} onClose={onClose}>
             <ModalHeader
                 moduleType={module.type}
-                isNew={moduleData?.isNew}
+                isNew={moduleData?.isNew !== false}
                 onClose={onClose}
             />
+
+            <div className="mb-4 text-sm">
+                <div className="flex flex-wrap gap-2 mb-2">
+                    <span className={`px-2 py-1 rounded text-xs ${moduleData?.isNew !== false ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
+                        {moduleData?.isNew !== false ? 'NEW MODULE' : 'EDITING EXISTING MODULE'}
+                    </span>
+                    <span className="px-2 py-1 rounded text-xs bg-gray-100 text-gray-800">
+                        Type: {module.type.toUpperCase()}
+                    </span>
+                    <span className="px-2 py-1 rounded text-xs bg-purple-100 text-purple-800">
+                        Content: {module.content?.length || 0} chars
+                    </span>
+                    {module.type === 'quiz' && (
+                        <span className="px-2 py-1 rounded text-xs bg-red-100 text-red-800">
+                            Questions: {module.quizData?.length || 0}
+                        </span>
+                    )}
+                </div>
+                <div className="text-xs text-gray-500">
+                    <div>Course: {courseId}</div>
+                    <div>{sectionInfo}</div>
+                    <div>Module ID: {module.id}</div>
+                </div>
+            </div>
 
             <form
                 onSubmit={handleSave}
@@ -324,28 +369,6 @@ export default function ModuleEditor({ isOpen, onClose, moduleData, courseId }) 
                 }}
                 className="space-y-4"
             >
-                <div className="text-xs text-gray-500 mb-2">
-                    <div>Path: courses/{courseId}/sections/{moduleData?.sectionId}
-                        {moduleData?.subSectionId && `/subSections/${moduleData.subSectionId}`}
-                        /modules/{module.id || "new"}</div>
-                    <div className="mt-1 flex items-center gap-2">
-                        <span className={`px-2 py-1 rounded text-xs ${moduleData?.isNew ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
-                            {moduleData?.isNew ? 'NEW MODULE' : 'EDITING EXISTING MODULE'}
-                        </span>
-                        <span className="px-2 py-1 rounded text-xs bg-gray-100 text-gray-800">
-                            Type: {module.type.toUpperCase()}
-                        </span>
-                        <span className="px-2 py-1 rounded text-xs bg-purple-100 text-purple-800">
-                            Content: {module.content?.length || 0} chars
-                        </span>
-                        {module.type === 'quiz' && (
-                            <span className="px-2 py-1 rounded text-xs bg-red-100 text-red-800">
-                                Questions: {module.quizData?.length || 0}
-                            </span>
-                        )}
-                    </div>
-                </div>
-
                 <TitleInput module={module} setModule={setModule} />
 
                 {module.type === 'video' && (
@@ -472,7 +495,7 @@ function VideoEditor({ videoUrl, setVideoUrl, currentContent }) {
                 <label className="text-sm font-medium">YouTube Video URL *</label>
                 <div className="flex gap-2 items-center">
                     <Input
-                        value={videoUrl || currentContent}
+                        value={videoUrl || currentContent || ""}
                         onChange={(e) => setVideoUrl(e.target.value)}
                         placeholder="https://www.youtube.com/watch?v=..."
                         className="flex-1"
@@ -490,7 +513,9 @@ function VideoEditor({ videoUrl, setVideoUrl, currentContent }) {
             {youtubeId && (
                 <div className="border rounded-lg p-4">
                     <p className="text-sm font-medium mb-2">Preview:</p>
-                    <RestrictedYouTubeEmbed videoId={youtubeId} />
+                    <div className="aspect-video">
+                        <RestrictedYouTubeEmbed videoId={youtubeId} />
+                    </div>
                 </div>
             )}
         </div>

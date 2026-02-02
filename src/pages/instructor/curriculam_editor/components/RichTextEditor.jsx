@@ -23,7 +23,7 @@ import {
     Heading3, Plus, Minus, Columns, Rows, Merge, Split, Upload,
     ArrowLeft, ArrowRight, Save, X, ExternalLink, WrapText,
     Maximize, Minimize, Move, Type as TypeIcon, ZoomIn, ZoomOut,
-    RotateCw, Download, Copy, Crop, Settings
+    RotateCw, Download, Copy, Crop, Settings, Loader2
 } from "lucide-react";
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
@@ -36,6 +36,28 @@ import { Button } from "../../../../components/ui/button";
 import { useToast } from "../../../../contexts/ToastComponent";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../../components/ui/popover";
 
+// Cloudinary Upload Function
+const uploadToCloudinary = async (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("upload_preset", "elearning-lms");
+    formData.append("cloud_name", "djiplqjqu");
+
+    try {
+        const response = await fetch(
+            `https://api.cloudinary.com/v1_1/djiplqjqu/image/upload`,
+            {
+                method: "POST",
+                body: formData,
+            }
+        );
+        const data = await response.json();
+        return data.secure_url;
+    } catch (error) {
+        console.error("Error uploading to Cloudinary:", error);
+        throw error;
+    }
+};
 
 // Table Modal Component
 function TableModal({
@@ -338,6 +360,7 @@ function TableModal({
         </Dialog>
     );
 }
+
 // Available fonts
 const FONT_FAMILIES = [
     { name: "Default", value: "inherit" },
@@ -407,6 +430,8 @@ export default function RichTextEditor({
     const [fontSize, setFontSize] = useState("16px");
     const [wordWrap, setWordWrap] = useState(true);
     const [selectedImageNode, setSelectedImageNode] = useState(null);
+    const [uploadedImages, setUploadedImages] = useState({}); // Store Cloudinary URLs
+    const [tempImageUrl, setTempImageUrl] = useState(null); // Store temp blob URLs
     const fileInputRef = useRef(null);
     const { toast } = useToast();
 
@@ -420,14 +445,34 @@ export default function RichTextEditor({
                     keepMarks: true,
                     keepAttributes: false,
                     HTMLAttributes: {
-                        class: 'list-disc pl-5',
+                        class: 'list-disc pl-6 space-y-1',
                     },
                 },
                 orderedList: {
                     keepMarks: true,
                     keepAttributes: false,
                     HTMLAttributes: {
-                        class: 'list-decimal pl-5',
+                        class: 'list-decimal pl-6 space-y-1',
+                    },
+                },
+                paragraph: {
+                    HTMLAttributes: {
+                        class: 'mb-4 leading-relaxed',
+                    },
+                },
+                blockquote: {
+                    HTMLAttributes: {
+                        class: 'border-l-4 border-gray-300 pl-4 my-4 italic',
+                    },
+                },
+                codeBlock: {
+                    HTMLAttributes: {
+                        class: 'bg-gray-100 dark:bg-gray-800 rounded-lg p-4 font-mono text-sm my-4',
+                    },
+                },
+                horizontalRule: {
+                    HTMLAttributes: {
+                        class: 'my-8 border-t border-gray-300',
                     },
                 },
             }),
@@ -495,11 +540,11 @@ export default function RichTextEditor({
                             renderHTML: attributes => {
                                 let style = '';
                                 if (attributes.align === 'left') {
-                                    style = 'float: left; margin-right: 1rem; margin-left: 0;';
+                                    style = 'float: left; margin-right: 1.5rem; margin-left: 0; margin-top: 0.5rem; margin-bottom: 0.5rem;';
                                 } else if (attributes.align === 'right') {
-                                    style = 'float: right; margin-left: 1rem; margin-right: 0;';
+                                    style = 'float: right; margin-left: 1.5rem; margin-right: 0; margin-top: 0.5rem; margin-bottom: 0.5rem;';
                                 } else if (attributes.align === 'center') {
-                                    style = 'display: block; margin-left: auto; margin-right: auto; float: none;';
+                                    style = 'display: block; margin-left: auto; margin-right: auto; float: none; margin-top: 1rem; margin-bottom: 1rem;';
                                 }
                                 return {
                                     'data-align': attributes.align,
@@ -510,6 +555,30 @@ export default function RichTextEditor({
                         class: {
                             default: 'editor-image',
                             parseHTML: element => element.getAttribute('class') || 'editor-image',
+                        },
+                        dataId: {
+                            default: null,
+                            parseHTML: element => element.getAttribute('data-id'),
+                            renderHTML: attributes => {
+                                if (attributes.dataId) {
+                                    return {
+                                        'data-id': attributes.dataId
+                                    };
+                                }
+                                return {};
+                            }
+                        },
+                        dataTemp: {
+                            default: false,
+                            parseHTML: element => element.getAttribute('data-temp') === 'true',
+                            renderHTML: attributes => {
+                                if (attributes.dataTemp) {
+                                    return {
+                                        'data-temp': 'true'
+                                    };
+                                }
+                                return {};
+                            }
                         }
                     }
                 }
@@ -517,22 +586,29 @@ export default function RichTextEditor({
                 inline: true,
                 allowBase64: true,
                 HTMLAttributes: {
-                    class: 'editor-image rounded-lg transition-all duration-200 hover:opacity-90 cursor-move',
+                    class: 'editor-image rounded-lg transition-all duration-200 cursor-move shadow-md',
                 },
             }),
             Table.configure({
                 resizable: true,
                 HTMLAttributes: {
-                    class: 'prose-table',
+                    class: 'prose-table min-w-full divide-y divide-gray-200 my-6',
                 },
             }),
             TableRow,
-            TableCell,
-            TableHeader,
-            TextAlign.configure({
-                types: ['heading', 'paragraph'],
+            TableCell.configure({
+                HTMLAttributes: {
+                    class: 'px-4 py-3 border border-gray-200',
+                },
             }),
-            // FIXED: Use a custom extension for font size
+            TableHeader.configure({
+                HTMLAttributes: {
+                    class: 'px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider bg-gray-50 border border-gray-200',
+                },
+            }),
+            TextAlign.configure({
+                types: ['heading', 'paragraph', 'image'],
+            }),
             TextStyle.extend({
                 addAttributes() {
                     return {
@@ -557,7 +633,7 @@ export default function RichTextEditor({
             Link.configure({
                 openOnClick: false,
                 HTMLAttributes: {
-                    class: 'text-primary underline hover:text-primary/80',
+                    class: 'text-blue-600 dark:text-blue-400 underline hover:text-blue-800 dark:hover:text-blue-300 transition-colors duration-200',
                     target: '_blank',
                     rel: 'noopener noreferrer',
                 },
@@ -567,14 +643,12 @@ export default function RichTextEditor({
         ],
         content: content || '<p>Start typing here...</p>',
         onUpdate: ({ editor }) => {
-            // FIXED: Only update parent if content actually changed
             const newContent = editor.getHTML();
             if (newContent !== content) {
                 onChange(newContent);
             }
         },
         onSelectionUpdate: ({ editor }) => {
-            // Check if an image is selected
             const selection = editor.state.selection;
             const node = editor.state.doc.nodeAt(selection.from);
 
@@ -595,57 +669,47 @@ export default function RichTextEditor({
         },
         editorProps: {
             attributes: {
-                class: `min-h-[400px] p-4 focus:outline-none prose max-w-none ${wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap'}`,
+                // FIXED: Remove line breaks and extra spaces from class string
+                class: `min-h-[400px] p-6 focus:outline-none prose prose-lg max-w-none ${wordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-nowrap'} prose-headings:font-bold prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-strong:text-gray-900 dark:prose-strong:text-gray-100 prose-em:text-gray-700 dark:prose-em:text-gray-300 prose-blockquote:text-gray-600 dark:prose-blockquote:text-gray-400 prose-ul:text-gray-700 dark:prose-ul:text-gray-300 prose-ol:text-gray-700 dark:prose-ol:text-gray-300 prose-code:text-gray-800 dark:prose-code:text-gray-200 prose-pre:bg-gray-100 dark:prose-pre:bg-gray-800 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-hr:border-gray-300 dark:prose-hr:border-gray-700 prose-img:rounded-lg prose-img:shadow-md prose-table:divide-gray-200 dark:prose-table:divide-gray-700 prose-th:text-gray-700 dark:prose-th:text-gray-300 prose-td:text-gray-600 dark:prose-td:text-gray-400`,
             },
         },
     });
 
-    // FIXED: Update editor content when prop changes
     useEffect(() => {
         if (editor && content !== editor.getHTML()) {
             editor.commands.setContent(content || '<p>Start typing here...</p>');
         }
     }, [editor, content]);
 
-    // Apply font size to selected text or set default for new text
     const applyFontSize = (size) => {
         if (!editor) return;
 
         setFontSize(size);
-
-        // Check if there's a selection
         const { from, to } = editor.state.selection;
         const hasSelection = from !== to;
 
         if (hasSelection) {
-            // Apply font size to selected text
             editor.chain().focus().setMark('textStyle', { fontSize: size }).run();
         } else {
-            // No selection - set for the current position (future typing)
             editor.chain().focus().setMark('textStyle', { fontSize: size }).run();
         }
     };
 
-    // Clear font size from selection
     const clearFontSize = () => {
         if (!editor) return;
 
-        // Check if there's a selection
         const { from, to } = editor.state.selection;
         const hasSelection = from !== to;
 
         if (hasSelection) {
-            // Remove font size from selected text
             editor.chain().focus().unsetMark('textStyle', 'fontSize').run();
         } else {
-            // Remove font size at cursor position
             editor.chain().focus().unsetMark('textStyle', 'fontSize').run();
         }
 
         setFontSize("16px");
     };
 
-    // Toggle word wrap
     const toggleWordWrap = () => {
         setWordWrap(!wordWrap);
         toast({
@@ -655,50 +719,137 @@ export default function RichTextEditor({
         });
     };
 
-    // Handle image upload
+    // UPDATED: Handle image upload with Cloudinary - Only upload once
     const handleImageUpload = async (file) => {
         if (!file) return;
 
         setImageUploading(true);
         try {
-            const imageUrl = URL.createObjectURL(file);
+            // Create temporary preview URL
+            const tempUrl = URL.createObjectURL(file);
+            setTempImageUrl(tempUrl);
 
+            // Insert temporary placeholder image
             editor.chain().focus().setImage({
-                src: imageUrl,
+                src: tempUrl,
                 alt: file.name,
                 title: file.name,
                 width: imageData.width,
                 height: imageData.height,
                 align: imageData.align,
-                class: 'editor-image'
+                class: 'editor-image uploading',
+                dataTemp: true // Mark as temporary
             }).run();
 
+            // Upload to Cloudinary
+            console.log("📤 Uploading image to Cloudinary...");
+            const cloudinaryUrl = await uploadToCloudinary(file);
+            console.log("✅ Cloudinary URL:", cloudinaryUrl);
+
+            // Store the Cloudinary URL
+            const imageId = Date.now().toString();
+            setUploadedImages(prev => ({
+                ...prev,
+                [imageId]: {
+                    url: cloudinaryUrl,
+                    fileName: file.name
+                }
+            }));
+
+            // Find and update all temporary images with this file name to use Cloudinary URL
+            if (editor) {
+                const { tr } = editor.state;
+                let foundTemp = false;
+
+                // Find and update all nodes in the document
+                editor.state.doc.descendants((node, pos) => {
+                    if (node.type.name === 'image' &&
+                        node.attrs.src === tempUrl &&
+                        node.attrs.dataTemp === true) {
+
+                        tr.setNodeMarkup(pos, null, {
+                            ...node.attrs,
+                            src: cloudinaryUrl,
+                            dataTemp: false,
+                            dataId: imageId
+                        });
+                        foundTemp = true;
+                    }
+                });
+
+                if (foundTemp) {
+                    editor.view.dispatch(tr);
+                }
+            }
+
+            // Update image data with Cloudinary URL
             setImageData({
                 ...imageData,
-                url: imageUrl,
-                alt: file.name,
-                title: file.name
+                url: cloudinaryUrl,
+                alt: imageData.alt || file.name,
+                title: imageData.title || file.name,
             });
 
             toast({
                 title: "Success",
-                description: "Image uploaded successfully",
+                description: "Image uploaded to Cloudinary successfully",
                 variant: "default",
             });
         } catch (error) {
             console.error("Error uploading image:", error);
             toast({
                 title: "Error",
-                description: "Failed to upload image",
+                description: "Failed to upload image to Cloudinary",
                 variant: "destructive",
             });
+
+            // Remove temporary image if upload failed
+            if (editor) {
+                editor.chain().focus().deleteSelection().run();
+            }
         } finally {
             setImageUploading(false);
             setShowImageUpload(false);
+            // Clean up temporary URL after a delay
+            setTimeout(() => {
+                if (tempImageUrl) {
+                    URL.revokeObjectURL(tempImageUrl);
+                    setTempImageUrl(null);
+                }
+            }, 1000);
         }
     };
 
-    // Insert image from URL
+    // UPDATED: Update selected image - Don't re-upload, just update properties
+    const updateSelectedImage = (updates) => {
+        if (!selectedImageNode || !editor) return;
+
+        // Get the current image ID if it exists
+        const imageId = selectedImageNode.attrs.dataId;
+
+        // Only update attributes, preserve the existing src
+        const newAttrs = {
+            ...selectedImageNode.attrs,
+            ...updates
+        };
+
+        // If we have an image ID and it exists in uploadedImages, preserve the Cloudinary URL
+        if (imageId && uploadedImages[imageId]) {
+            newAttrs.src = uploadedImages[imageId].url;
+        }
+
+        editor.chain().focus().updateAttributes('image', newAttrs).run();
+
+        setImageData(prev => ({ ...prev, ...updates }));
+
+        toast({
+            title: "Updated",
+            description: "Image properties updated",
+            variant: "default",
+        });
+    };
+
+    // UPDATED: Insert image from URL (could be Cloudinary URL)
     const handleInsertImageFromUrl = () => {
         if (!imageData.url) {
             toast({
@@ -709,6 +860,20 @@ export default function RichTextEditor({
             return;
         }
 
+        // Generate a unique ID for this image
+        const imageId = Date.now().toString();
+
+        // If it looks like a Cloudinary URL, store it
+        if (imageData.url.includes('cloudinary.com')) {
+            setUploadedImages(prev => ({
+                ...prev,
+                [imageId]: {
+                    url: imageData.url,
+                    fileName: imageData.alt || 'uploaded-image'
+                }
+            }));
+        }
+
         editor.chain().focus().setImage({
             src: imageData.url,
             alt: imageData.alt || "Image",
@@ -716,7 +881,9 @@ export default function RichTextEditor({
             width: imageData.width,
             height: imageData.height,
             align: imageData.align,
-            class: 'editor-image'
+            class: 'editor-image',
+            dataId: imageId,
+            dataTemp: false
         }).run();
 
         toast({
@@ -736,50 +903,26 @@ export default function RichTextEditor({
         });
     };
 
-    // Update selected image properties
-    const updateSelectedImage = (updates) => {
-        if (!selectedImageNode || !editor) return;
-
-        editor.chain().focus().updateAttributes('image', {
-            ...selectedImageNode.attrs,
-            ...updates
-        }).run();
-
-        setImageData(prev => ({ ...prev, ...updates }));
-
-        toast({
-            title: "Updated",
-            description: "Image properties updated",
-            variant: "default",
-        });
-    };
-
-    // Center selected image
     const centerImage = () => {
         updateSelectedImage({ align: 'center' });
     };
 
-    // Align image left
     const alignImageLeft = () => {
         updateSelectedImage({ align: 'left' });
     };
 
-    // Align image right
     const alignImageRight = () => {
         updateSelectedImage({ align: 'right' });
     };
 
-    // Resize image
     const resizeImage = (width, height = "auto") => {
         updateSelectedImage({ width, height });
     };
 
-    // Set max height for image
     const setMaxHeight = (maxHeight) => {
         updateSelectedImage({ maxHeight });
     };
 
-    // Reset image size
     const resetImageSize = () => {
         updateSelectedImage({
             width: "100%",
@@ -788,7 +931,6 @@ export default function RichTextEditor({
         });
     };
 
-    // Insert table with initial structure
     const insertTable = (rows, cols, hasHeader = true) => {
         editor.chain().focus().insertTable({
             rows,
@@ -797,7 +939,6 @@ export default function RichTextEditor({
         }).run();
     };
 
-    // Table operations
     const addRow = (position = 'below') => {
         if (position === 'above') {
             editor.chain().focus().addRowBefore().run();
@@ -830,7 +971,6 @@ export default function RichTextEditor({
         editor.chain().focus().splitCell().run();
     };
 
-    // Handle link insertion
     const handleInsertLink = () => {
         if (!currentLink.url) {
             toast({
@@ -842,11 +982,9 @@ export default function RichTextEditor({
         }
 
         if (editor) {
-            // If there's selected text, wrap it with link
             if (currentLink.text) {
                 editor.chain().focus().insertContent(`<a href="${currentLink.url}" target="_blank" rel="noopener noreferrer">${currentLink.text}</a>`).run();
             } else {
-                // Otherwise, insert link at cursor position
                 const selectedText = editor.state.selection.content().content.firstChild?.text || 'Link';
                 editor.chain().focus().setLink({
                     href: currentLink.url,
@@ -877,10 +1015,11 @@ export default function RichTextEditor({
         }
     };
 
-    // Clear editor content
     const clearContent = () => {
         if (window.confirm("Are you sure you want to clear all content?")) {
             editor.chain().focus().clearContent().run();
+            // Also clear uploaded images tracking
+            setUploadedImages({});
             toast({
                 title: "Cleared",
                 description: "Content cleared",
@@ -889,11 +1028,11 @@ export default function RichTextEditor({
         }
     };
 
-    // Save and close - FIXED: Ensure content is saved properly
     const handleSave = () => {
         if (editor) {
             const finalContent = editor.getHTML();
             console.log("💾 Saving content from RTE:", finalContent);
+            console.log("📁 Uploaded images:", uploadedImages);
             onChange(finalContent);
             toast({
                 title: "Saved",
@@ -904,7 +1043,6 @@ export default function RichTextEditor({
         }
     };
 
-    // Navigation handlers
     const handlePrevious = () => {
         if (navigation?.onPrevious) {
             navigation.onPrevious();
@@ -917,17 +1055,21 @@ export default function RichTextEditor({
         }
     };
 
-    // Add global styles for images and tables
+    // Add global styles
     useEffect(() => {
         const style = document.createElement('style');
         style.innerHTML = `
             .tiptap {
                 ${wordWrap ? 'word-wrap: break-word; white-space: pre-wrap;' : 'white-space: nowrap;'}
-                line-height: 1.6;
-                font-size: 16px; /* Base font size */
+                line-height: 1.75;
+                font-size: 16px;
+                color: #374151;
             }
             
-            /* Style for font size marks */
+            .tiptap.dark {
+                color: #d1d5db;
+            }
+            
             .tiptap span[style*="font-size"] {
                 display: inline;
             }
@@ -935,27 +1077,52 @@ export default function RichTextEditor({
             .tiptap img.editor-image {
                 max-width: 100%;
                 height: auto;
-                border-radius: 0.5rem;
-                margin: 1rem 0;
-                transition: all 0.2s ease;
+                border-radius: 0.75rem;
+                margin: 1.5rem 0;
+                transition: all 0.3s ease;
                 cursor: move;
                 object-fit: contain;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            }
+            
+            .tiptap img.editor-image:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            }
+            
+            .tiptap img.editor-image.uploading {
+                opacity: 0.7;
+                position: relative;
+            }
+            
+            .tiptap img.editor-image.uploading::after {
+                content: "Uploading...";
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: rgba(0, 0, 0, 0.8);
+                color: white;
+                padding: 6px 12px;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: 500;
             }
             
             .tiptap img.editor-image[data-align="left"] {
                 float: left;
-                margin-right: 1rem;
+                margin-right: 2rem;
                 margin-left: 0;
-                margin-top: 0.5rem;
-                margin-bottom: 0.5rem;
+                margin-top: 0.75rem;
+                margin-bottom: 0.75rem;
             }
             
             .tiptap img.editor-image[data-align="right"] {
                 float: right;
-                margin-left: 1rem;
+                margin-left: 2rem;
                 margin-right: 0;
-                margin-top: 0.5rem;
-                margin-bottom: 0.5rem;
+                margin-top: 0.75rem;
+                margin-bottom: 0.75rem;
             }
             
             .tiptap img.editor-image[data-align="center"] {
@@ -963,39 +1130,43 @@ export default function RichTextEditor({
                 margin-left: auto;
                 margin-right: auto;
                 float: none;
+                margin-top: 1.5rem;
+                margin-bottom: 1.5rem;
             }
             
             .tiptap img.ProseMirror-selectednode {
-                outline: 3px solid hsl(var(--primary));
-                box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                outline: 3px solid #3b82f6;
+                box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.1);
+                border-radius: 0.75rem;
             }
             
             .tiptap table {
                 border-collapse: collapse;
-                margin: 1rem 0;
+                margin: 2rem 0;
                 overflow: hidden;
-                table-layout: fixed;
+                table-layout: auto;
                 width: 100%;
+                border-radius: 0.5rem;
+                box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
             }
             
             .tiptap td,
             .tiptap th {
-                border: 1px solid hsl(var(--border));
-                box-sizing: border-box;
-                min-width: 1em;
-                padding: 6px 8px;
+                border: 1px solid #e5e7eb;
+                padding: 0.75rem 1rem;
                 position: relative;
                 vertical-align: top;
             }
             
             .tiptap th {
-                background-color: hsl(var(--muted));
-                font-weight: bold;
+                background-color: #f9fafb;
+                font-weight: 600;
+                color: #374151;
                 text-align: left;
             }
             
             .tiptap .selectedCell:after {
-                background: rgba(200, 200, 255, 0.4);
+                background: rgba(59, 130, 246, 0.1);
                 content: "";
                 left: 0;
                 right: 0;
@@ -1007,33 +1178,41 @@ export default function RichTextEditor({
             }
             
             .tiptap .column-resize-handle {
-                background-color: hsl(var(--primary));
+                background-color: #3b82f6;
                 bottom: -2px;
                 pointer-events: none;
                 position: absolute;
                 right: -2px;
                 top: 0;
                 width: 4px;
+                border-radius: 2px;
             }
             
             .tiptap p {
-                margin: 0.75rem 0;
+                margin-bottom: 1.25rem;
+                line-height: 1.75;
+            }
+            
+            .tiptap p:last-child {
+                margin-bottom: 0;
+            }
+            
+            .tiptap ul, .tiptap ol {
+                margin: 1.25rem 0;
+                padding-left: 1.5rem;
             }
             
             .tiptap ul {
                 list-style-type: disc;
-                padding-left: 1.5rem;
-                margin: 0.75rem 0;
             }
             
             .tiptap ol {
                 list-style-type: decimal;
-                padding-left: 1.5rem;
-                margin: 0.75rem 0;
             }
             
             .tiptap li {
-                margin: 0.25rem 0;
+                margin: 0.5rem 0;
+                line-height: 1.75;
             }
             
             .tiptap li > p {
@@ -1041,28 +1220,117 @@ export default function RichTextEditor({
             }
             
             .tiptap a {
-                color: hsl(var(--primary));
+                color: #2563eb;
                 text-decoration: underline;
                 cursor: pointer;
+                transition: color 0.2s ease;
+                font-weight: 500;
             }
             
             .tiptap a:hover {
-                color: hsl(var(--primary) / 0.8);
+                color: #1d4ed8;
+                text-decoration: none;
             }
             
             .tiptap h1, .tiptap h2, .tiptap h3, .tiptap h4, .tiptap h5, .tiptap h6 {
-                margin-top: 1.5rem;
-                margin-bottom: 0.75rem;
-                font-weight: 600;
+                margin-top: 2rem;
+                margin-bottom: 1rem;
+                font-weight: 700;
                 line-height: 1.25;
+                color: #111827;
             }
             
-            .tiptap h1 { font-size: 2em; }
-            .tiptap h2 { font-size: 1.5em; }
-            .tiptap h3 { font-size: 1.17em; }
-            .tiptap h4 { font-size: 1em; }
-            .tiptap h5 { font-size: 0.83em; }
-            .tiptap h6 { font-size: 0.67em; }
+            .tiptap.dark h1, .tiptap.dark h2, .tiptap.dark h3, 
+            .tiptap.dark h4, .tiptap.dark h5, .tiptap.dark h6 {
+                color: #f9fafb;
+            }
+            
+            .tiptap h1 { 
+                font-size: 2.25rem;
+                letter-spacing: -0.025em;
+            }
+            
+            .tiptap h2 { 
+                font-size: 1.875rem;
+                letter-spacing: -0.025em;
+            }
+            
+            .tiptap h3 { 
+                font-size: 1.5rem;
+                letter-spacing: -0.025em;
+            }
+            
+            .tiptap h4 { 
+                font-size: 1.25rem;
+                font-weight: 600;
+            }
+            
+            .tiptap h5 { 
+                font-size: 1.125rem;
+                font-weight: 600;
+            }
+            
+            .tiptap h6 { 
+                font-size: 1rem;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+            }
+            
+            .tiptap blockquote {
+                border-left: 4px solid #d1d5db;
+                padding-left: 1.5rem;
+                margin: 1.5rem 0;
+                font-style: italic;
+                color: #6b7280;
+            }
+            
+            .tiptap blockquote p {
+                margin: 0.5rem 0;
+            }
+            
+            .tiptap code {
+                background-color: #f3f4f6;
+                padding: 0.25rem 0.5rem;
+                border-radius: 0.375rem;
+                font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+                font-size: 0.875em;
+            }
+            
+            .tiptap pre {
+                background-color: #1f2937;
+                color: #f9fafb;
+                padding: 1rem;
+                border-radius: 0.5rem;
+                overflow-x: auto;
+                margin: 1.5rem 0;
+            }
+            
+            .tiptap pre code {
+                background-color: transparent;
+                padding: 0;
+                color: inherit;
+                font-size: 0.875em;
+            }
+            
+            .tiptap hr {
+                border: none;
+                border-top: 2px solid #e5e7eb;
+                margin: 2rem 0;
+            }
+            
+            .tiptap strong {
+                font-weight: 700;
+                color: #111827;
+            }
+            
+            .tiptap em {
+                font-style: italic;
+            }
+            
+            .tiptap u {
+                text-decoration: underline;
+            }
             
             .whitespace-nowrap {
                 overflow-x: auto;
@@ -1071,9 +1339,40 @@ export default function RichTextEditor({
             .tiptap .is-empty::before {
                 content: attr(data-placeholder);
                 float: left;
-                color: hsl(var(--muted-foreground));
+                color: #9ca3af;
                 pointer-events: none;
                 height: 0;
+                font-style: italic;
+            }
+            
+            /* Custom text colors */
+            .tiptap .text-red { color: #dc2626; }
+            .tiptap .text-blue { color: #2563eb; }
+            .tiptap .text-green { color: #059669; }
+            .tiptap .text-yellow { color: #d97706; }
+            .tiptap .text-purple { color: #7c3aed; }
+            .tiptap .text-pink { color: #db2777; }
+            .tiptap .text-indigo { color: #4f46e5; }
+            .tiptap .text-teal { color: #0d9488; }
+            .tiptap .text-orange { color: #ea580c; }
+            
+            /* Custom backgrounds */
+            .tiptap .bg-highlight {
+                background-color: #fef3c7;
+                padding: 0.125rem 0.25rem;
+                border-radius: 0.25rem;
+            }
+            
+            .tiptap .bg-blue-light {
+                background-color: #dbeafe;
+                padding: 0.125rem 0.25rem;
+                border-radius: 0.25rem;
+            }
+            
+            .tiptap .bg-green-light {
+                background-color: #d1fae5;
+                padding: 0.125rem 0.25rem;
+                border-radius: 0.25rem;
             }
         `;
         document.head.appendChild(style);
@@ -1084,7 +1383,7 @@ export default function RichTextEditor({
     }, [wordWrap]);
 
     if (!editor) {
-        return <div className="flex items-center justify-center h-64">Loading editor...</div>;
+        return <div className="flex items-center justify-center h-64 text-gray-500">Loading editor...</div>;
     }
 
     return (
@@ -1095,8 +1394,7 @@ export default function RichTextEditor({
                 exit={{ opacity: 0, scale: 0.95 }}
                 className={`fixed inset-0 z-[60] bg-background ${fullscreen ? '' : 'flex items-center justify-center p-4'}`}
             >
-                <div className={`${fullscreen ? 'h-full' : 'w-full max-w-6xl max-h-[90vh]'} flex flex-col bg-card rounded-lg shadow-2xl overflow-hidden`}>
-                    {/* Toolbar */}
+                <div className={`${fullscreen ? 'h-full' : 'w-full max-w-6xl max-h-[90vh]'} flex flex-col bg-card rounded-lg shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-800`}>
                     <Toolbar
                         editor={editor}
                         fullscreen={fullscreen}
@@ -1107,7 +1405,6 @@ export default function RichTextEditor({
                         onShowImageUpload={() => setShowImageUpload(true)}
                         onShowTableModal={() => setShowTableModal(true)}
                         onShowLinkModal={() => {
-                            // Get selected text for link
                             const selectedText = editor.state.selection.content().content.firstChild?.text || '';
                             setCurrentLink(prev => ({ ...prev, text: selectedText }));
                             setShowLinkModal(true);
@@ -1127,12 +1424,10 @@ export default function RichTextEditor({
                         onResetImageSize={resetImageSize}
                     />
 
-                    {/* Editor Area */}
-                    <div className="flex-1 overflow-auto border-t">
+                    <div className="flex-1 overflow-auto border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
                         <EditorContent editor={editor} />
                     </div>
 
-                    {/* Navigation Bar */}
                     {showNavigation && navigation && (
                         <NavigationBar
                             current={navigation.current}
@@ -1147,7 +1442,6 @@ export default function RichTextEditor({
                 </div>
             </motion.div>
 
-            {/* Image Upload Modal */}
             <ImageUploadModal
                 show={showImageUpload}
                 onClose={() => setShowImageUpload(false)}
@@ -1159,7 +1453,6 @@ export default function RichTextEditor({
                 onInsert={handleInsertImageFromUrl}
             />
 
-            {/* Image Settings Modal */}
             <ImageSettingsModal
                 show={showImageSettings}
                 onClose={() => setShowImageSettings(false)}
@@ -1174,7 +1467,6 @@ export default function RichTextEditor({
                 onResetImageSize={resetImageSize}
             />
 
-            {/* Table Modal */}
             <TableModal
                 show={showTableModal}
                 onClose={() => setShowTableModal(false)}
@@ -1188,7 +1480,6 @@ export default function RichTextEditor({
                 editor={editor}
             />
 
-            {/* Link Modal */}
             <LinkModal
                 show={showLinkModal}
                 onClose={() => setShowLinkModal(false)}
@@ -1227,15 +1518,15 @@ function Toolbar({
     onResetImageSize
 }) {
     return (
-        <div className="flex items-center justify-between p-3 bg-muted/30 border-b">
+        <div className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 border-b border-gray-200 dark:border-gray-800">
             <div className="flex items-center gap-2 flex-wrap">
-                {/* Undo/Redo */}
                 <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().undo().run()}
                     disabled={!editor.can().undo()}
+                    className="hover:bg-gray-200 dark:hover:bg-gray-700"
                 >
                     <Undo2 size={16} />
                 </Button>
@@ -1245,56 +1536,55 @@ function Toolbar({
                     size="sm"
                     onClick={() => editor.chain().focus().redo().run()}
                     disabled={!editor.can().redo()}
+                    className="hover:bg-gray-200 dark:hover:bg-gray-700"
                 >
                     <Redo2 size={16} />
                 </Button>
 
-                <div className="w-px h-6 bg-border mx-1" />
+                <div className="w-px h-6 bg-gray-300 dark:bg-gray-700 mx-1" />
 
-                {/* Word Wrap Toggle */}
                 <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={onToggleWordWrap}
-                    className={wordWrap ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${wordWrap ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                     title={wordWrap ? "Disable Word Wrap" : "Enable Word Wrap"}
                 >
                     <WrapText size={16} />
                 </Button>
 
-                <div className="w-px h-6 bg-border mx-1" />
+                <div className="w-px h-6 bg-gray-300 dark:bg-gray-700 mx-1" />
 
-                {/* Font Size Controls */}
                 <Popover>
                     <PopoverTrigger asChild>
                         <Button
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="gap-1"
+                            className="gap-1 hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             <TypeIcon size={16} />
-                            <span className="text-xs">{fontSize.replace('px', '')}</span>
+                            <span className="text-xs font-medium">{fontSize.replace('px', '')}</span>
                         </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-48">
-                        <div className="grid gap-2">
-                            <div className="grid grid-cols-2 items-center gap-2">
-                                <Label htmlFor="font-size">Font Size</Label>
+                    <PopoverContent className="w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+                        <div className="grid gap-3">
+                            <div className="grid grid-cols-2 items-center gap-3">
+                                <Label htmlFor="font-size" className="text-sm font-medium">Font Size</Label>
                                 <div className="flex items-center gap-2">
                                     <Input
                                         id="font-size"
                                         type="text"
                                         value={fontSize}
                                         onChange={(e) => onApplyFontSize(e.target.value)}
-                                        className="h-8"
+                                        className="h-8 text-sm"
                                         placeholder="16px"
                                     />
-                                    <span className="text-xs">px</span>
+                                    <span className="text-xs text-gray-500">px</span>
                                 </div>
                             </div>
-                            <div className="grid grid-cols-4 gap-1">
+                            <div className="grid grid-cols-4 gap-2">
                                 {[12, 14, 16, 18].map((size) => (
                                     <Button
                                         key={size}
@@ -1302,13 +1592,13 @@ function Toolbar({
                                         variant="outline"
                                         size="sm"
                                         onClick={() => onApplyFontSize(`${size}px`)}
-                                        className={`text-xs ${fontSize === `${size}px` ? 'bg-primary/20' : ''}`}
+                                        className={`text-xs ${fontSize === `${size}px` ? 'bg-blue-100 dark:bg-blue-900 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400' : 'border-gray-300 dark:border-gray-600'}`}
                                     >
                                         {size}
                                     </Button>
                                 ))}
                             </div>
-                            <div className="grid grid-cols-4 gap-1">
+                            <div className="grid grid-cols-4 gap-2">
                                 {[20, 24, 28, 32].map((size) => (
                                     <Button
                                         key={size}
@@ -1316,19 +1606,19 @@ function Toolbar({
                                         variant="outline"
                                         size="sm"
                                         onClick={() => onApplyFontSize(`${size}px`)}
-                                        className={`text-xs ${fontSize === `${size}px` ? 'bg-primary/20' : ''}`}
+                                        className={`text-xs ${fontSize === `${size}px` ? 'bg-blue-100 dark:bg-blue-900 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400' : 'border-gray-300 dark:border-gray-600'}`}
                                     >
                                         {size}
                                     </Button>
                                 ))}
                             </div>
-                            <div className="flex gap-1">
+                            <div className="flex gap-2">
                                 <Button
                                     type="button"
                                     variant="outline"
                                     size="sm"
                                     onClick={() => onApplyFontSize('16px')}
-                                    className="flex-1"
+                                    className="flex-1 text-xs border-gray-300 dark:border-gray-600"
                                 >
                                     Reset Default
                                 </Button>
@@ -1337,7 +1627,7 @@ function Toolbar({
                                     variant="outline"
                                     size="sm"
                                     onClick={onClearFontSize}
-                                    className="flex-1"
+                                    className="flex-1 text-xs border-gray-300 dark:border-gray-600"
                                 >
                                     Clear
                                 </Button>
@@ -1346,7 +1636,6 @@ function Toolbar({
                     </PopoverContent>
                 </Popover>
 
-                {/* Text Styles */}
                 <Select
                     value={editor.getAttributes('heading')?.level?.toString() || 'p'}
                     onValueChange={(value) => {
@@ -1357,61 +1646,59 @@ function Toolbar({
                         }
                     }}
                 >
-                    <SelectTrigger className="w-24 h-8">
+                    <SelectTrigger className="w-28 h-8 text-sm bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                         <SelectValue placeholder="Normal" />
                     </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="p">Normal</SelectItem>
-                        <SelectItem value="1">
+                    <SelectContent className="bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+                        <SelectItem value="p" className="text-sm hover:bg-gray-100 dark:hover:bg-gray-700">Normal</SelectItem>
+                        <SelectItem value="1" className="text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
                             <div className="flex items-center gap-2">
                                 <Heading1 size={14} />
-                                Heading 1
+                                <span className="font-bold">Heading 1</span>
                             </div>
                         </SelectItem>
-                        <SelectItem value="2">
+                        <SelectItem value="2" className="text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
                             <div className="flex items-center gap-2">
                                 <Heading2 size={14} />
-                                Heading 2
+                                <span className="font-bold">Heading 2</span>
                             </div>
                         </SelectItem>
-                        <SelectItem value="3">
+                        <SelectItem value="3" className="text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
                             <div className="flex items-center gap-2">
                                 <Heading3 size={14} />
-                                Heading 3
+                                <span className="font-bold">Heading 3</span>
                             </div>
                         </SelectItem>
-                        <SelectItem value="4">Heading 4</SelectItem>
-                        <SelectItem value="5">Heading 5</SelectItem>
-                        <SelectItem value="6">Heading 6</SelectItem>
+                        <SelectItem value="4" className="text-sm hover:bg-gray-100 dark:hover:bg-gray-700">Heading 4</SelectItem>
+                        <SelectItem value="5" className="text-sm hover:bg-gray-100 dark:hover:bg-gray-700">Heading 5</SelectItem>
+                        <SelectItem value="6" className="text-sm hover:bg-gray-100 dark:hover:bg-gray-700">Heading 6</SelectItem>
                     </SelectContent>
                 </Select>
 
-                {/* Font Family */}
                 <Select
                     value={editor.getAttributes('textStyle')?.fontFamily || 'inherit'}
                     onValueChange={(value) => editor.chain().focus().setFontFamily(value).run()}
                 >
-                    <SelectTrigger className="w-32 h-8">
+                    <SelectTrigger className="w-36 h-8 text-sm bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                         <SelectValue placeholder="Font" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 max-h-64">
                         {FONT_FAMILIES.map((font) => (
-                            <SelectItem key={font.value} value={font.value}>
+                            <SelectItem key={font.value} value={font.value} className="text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
                                 <span style={{ fontFamily: font.value }}>{font.name}</span>
                             </SelectItem>
                         ))}
                     </SelectContent>
                 </Select>
 
-                <div className="w-px h-6 bg-border mx-1" />
+                <div className="w-px h-6 bg-gray-300 dark:bg-gray-700 mx-1" />
 
-                {/* Text Formatting */}
                 <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().toggleBold().run()}
-                    className={editor.isActive('bold') ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive('bold') ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <Bold size={16} />
                 </Button>
@@ -1420,7 +1707,7 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().toggleItalic().run()}
-                    className={editor.isActive('italic') ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive('italic') ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <Italic size={16} />
                 </Button>
@@ -1429,23 +1716,21 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().toggleUnderline().run()}
-                    className={editor.isActive('underline') ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive('underline') ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <UnderlineIcon size={16} />
                 </Button>
 
-                {/* Color Picker */}
                 <ColorPicker editor={editor} />
 
-                <div className="w-px h-6 bg-border mx-1" />
+                <div className="w-px h-6 bg-gray-300 dark:bg-gray-700 mx-1" />
 
-                {/* Alignment */}
                 <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().setTextAlign('left').run()}
-                    className={editor.isActive({ textAlign: 'left' }) ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive({ textAlign: 'left' }) ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <AlignLeft size={16} />
                 </Button>
@@ -1454,7 +1739,7 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().setTextAlign('center').run()}
-                    className={editor.isActive({ textAlign: 'center' }) ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive({ textAlign: 'center' }) ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <AlignCenter size={16} />
                 </Button>
@@ -1463,7 +1748,7 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().setTextAlign('right').run()}
-                    className={editor.isActive({ textAlign: 'right' }) ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive({ textAlign: 'right' }) ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <AlignRight size={16} />
                 </Button>
@@ -1472,20 +1757,19 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().setTextAlign('justify').run()}
-                    className={editor.isActive({ textAlign: 'justify' }) ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive({ textAlign: 'justify' }) ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <AlignJustify size={16} />
                 </Button>
 
-                <div className="w-px h-6 bg-border mx-1" />
+                <div className="w-px h-6 bg-gray-300 dark:bg-gray-700 mx-1" />
 
-                {/* Lists */}
                 <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().toggleBulletList().run()}
-                    className={editor.isActive('bulletList') ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive('bulletList') ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <List size={16} />
                 </Button>
@@ -1494,19 +1778,19 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().toggleOrderedList().run()}
-                    className={editor.isActive('orderedList') ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive('orderedList') ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <ListOrdered size={16} />
                 </Button>
 
-                <div className="w-px h-6 bg-border mx-1" />
+                <div className="w-px h-6 bg-gray-300 dark:bg-gray-700 mx-1" />
 
-                {/* Special Elements */}
                 <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={() => editor.chain().focus().setHorizontalRule().run()}
+                    className="hover:bg-gray-200 dark:hover:bg-gray-700"
                 >
                     <MinusSquare size={16} />
                 </Button>
@@ -1515,7 +1799,7 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={onShowLinkModal}
-                    className={editor.isActive('link') ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive('link') ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <LinkIcon size={16} />
                 </Button>
@@ -1524,6 +1808,7 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={onShowImageUpload}
+                    className="hover:bg-gray-200 dark:hover:bg-gray-700"
                 >
                     <ImageIcon size={16} />
                 </Button>
@@ -1532,21 +1817,21 @@ function Toolbar({
                     variant="ghost"
                     size="sm"
                     onClick={onShowTableModal}
-                    className={editor.isActive('table') ? 'bg-primary/20' : ''}
+                    className={`hover:bg-gray-200 dark:hover:bg-gray-700 ${editor.isActive('table') ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : ''}`}
                 >
                     <TableIcon size={16} />
                 </Button>
 
-                {/* Image Controls (only show when image is selected) */}
                 {selectedImageNode && (
                     <>
-                        <div className="w-px h-6 bg-border mx-1" />
+                        <div className="w-px h-6 bg-gray-300 dark:bg-gray-700 mx-1" />
                         <Button
                             type="button"
                             variant="ghost"
                             size="sm"
                             onClick={onShowImageSettings}
                             title="Image Settings"
+                            className="hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             <Settings size={16} />
                         </Button>
@@ -1556,6 +1841,7 @@ function Toolbar({
                             size="sm"
                             onClick={onCenterImage}
                             title="Center Image"
+                            className="hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             <AlignCenter size={16} />
                         </Button>
@@ -1565,6 +1851,7 @@ function Toolbar({
                             size="sm"
                             onClick={onAlignImageLeft}
                             title="Align Image Left"
+                            className="hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             <AlignLeft size={16} />
                         </Button>
@@ -1574,6 +1861,7 @@ function Toolbar({
                             size="sm"
                             onClick={onAlignImageRight}
                             title="Align Image Right"
+                            className="hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             <AlignRight size={16} />
                         </Button>
@@ -1583,6 +1871,7 @@ function Toolbar({
                             size="sm"
                             onClick={() => onResizeImage("50%")}
                             title="Resize to 50%"
+                            className="hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             <ZoomOut size={16} />
                         </Button>
@@ -1592,6 +1881,7 @@ function Toolbar({
                             size="sm"
                             onClick={() => onResizeImage("100%")}
                             title="Resize to 100%"
+                            className="hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             <ZoomIn size={16} />
                         </Button>
@@ -1601,31 +1891,31 @@ function Toolbar({
                             size="sm"
                             onClick={onResetImageSize}
                             title="Reset Image Size"
+                            className="hover:bg-gray-200 dark:hover:bg-gray-700"
                         >
                             <RotateCw size={16} />
                         </Button>
                     </>
                 )}
 
-                {/* Clear Content */}
                 <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={onClearContent}
-                    className="text-destructive hover:text-destructive"
+                    className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
                 >
                     <Trash2 size={16} />
                 </Button>
             </div>
 
-            {/* Action Buttons */}
             <div className="flex items-center gap-2">
                 <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={onToggleFullscreen}
+                    className="hover:bg-gray-200 dark:hover:bg-gray-700"
                 >
                     {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                 </Button>
@@ -1634,6 +1924,7 @@ function Toolbar({
                     variant="outline"
                     size="sm"
                     onClick={onClose}
+                    className="border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
                 >
                     Cancel
                 </Button>
@@ -1641,8 +1932,9 @@ function Toolbar({
                     type="button"
                     size="sm"
                     onClick={onSave}
+                    className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 text-white"
                 >
-                    <Save size={16} className="mr-1" />
+                    <Save size={16} className="mr-2" />
                     Save
                 </Button>
             </div>
@@ -1663,6 +1955,7 @@ function ColorPicker({ editor }) {
                 size="sm"
                 onClick={() => setShowPicker(!showPicker)}
                 style={{ color: currentColor }}
+                className="hover:bg-gray-200 dark:hover:bg-gray-700"
             >
                 <Palette size={16} />
             </Button>
@@ -1673,13 +1966,13 @@ function ColorPicker({ editor }) {
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
-                        className="absolute top-full left-0 mt-1 p-2 bg-popover border rounded-lg shadow-lg z-10 w-48"
+                        className="absolute top-full left-0 mt-1 p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-10 w-56"
                     >
-                        <div className="grid grid-cols-4 gap-2">
+                        <div className="grid grid-cols-6 gap-2 mb-3">
                             {COLORS.map((color) => (
                                 <button
                                     key={color}
-                                    className="w-8 h-8 rounded border"
+                                    className="w-7 h-7 rounded border border-gray-300 dark:border-gray-600 hover:scale-110 transition-transform"
                                     style={{ backgroundColor: color }}
                                     onClick={() => {
                                         editor.chain().focus().setColor(color).run();
@@ -1689,13 +1982,28 @@ function ColorPicker({ editor }) {
                                 />
                             ))}
                         </div>
-                        <div className="mt-2">
+                        <div className="space-y-2">
+                            <Label className="text-sm font-medium">Custom Color</Label>
                             <Input
                                 type="color"
                                 value={currentColor}
                                 onChange={(e) => editor.chain().focus().setColor(e.target.value).run()}
                                 className="w-full h-8"
                             />
+                        </div>
+                        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    editor.chain().focus().unsetColor().run();
+                                    setShowPicker(false);
+                                }}
+                                className="w-full text-xs"
+                            >
+                                Reset to Default
+                            </Button>
                         </div>
                     </motion.div>
                 )}
@@ -1704,7 +2012,7 @@ function ColorPicker({ editor }) {
     );
 }
 
-// Image Upload Modal
+// Image Upload Modal with Cloudinary support
 function ImageUploadModal({
     show,
     onClose,
@@ -1720,27 +2028,49 @@ function ImageUploadModal({
     const handleFileUpload = (e) => {
         const file = e.target.files?.[0];
         if (file) {
+            // Set filename as default alt text
+            onImageDataChange({ ...imageData, alt: file.name, title: file.name });
             onUpload(file);
         }
     };
 
+    const handleDrop = (e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files?.[0];
+        if (file && file.type.startsWith('image/')) {
+            onImageDataChange({ ...imageData, alt: file.name, title: file.name });
+            onUpload(file);
+        }
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+    };
+
     return (
         <Dialog open={show} onOpenChange={onClose}>
-            <DialogContent className="sm:max-w-md">
+            <DialogContent className="sm:max-w-md bg-white dark:bg-gray-900">
                 <DialogHeader>
-                    <DialogTitle>Insert Image</DialogTitle>
+                    <DialogTitle className="text-lg font-semibold">Insert Image</DialogTitle>
+                    <DialogDescription className="text-gray-600 dark:text-gray-400">
+                        Upload to Cloudinary or insert from URL
+                    </DialogDescription>
                 </DialogHeader>
 
                 <Tabs defaultValue="upload" className="w-full">
-                    <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="upload">Upload</TabsTrigger>
-                        <TabsTrigger value="url">URL</TabsTrigger>
+                    <TabsList className="grid w-full grid-cols-2 bg-gray-100 dark:bg-gray-800">
+                        <TabsTrigger value="upload" className="data-[state=active]:bg-white dark:data-[state=active]:bg-gray-900">Upload</TabsTrigger>
+                        <TabsTrigger value="url" className="data-[state=active]:bg-white dark:data-[state=active]:bg-gray-900">From URL</TabsTrigger>
                     </TabsList>
 
-                    <TabsContent value="upload" className="space-y-4">
-                        <div className="border-2 border-dashed rounded-lg p-6 text-center">
-                            <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
-                            <p className="text-sm text-muted-foreground mb-4">
+                    <TabsContent value="upload" className="space-y-4 mt-4">
+                        <div
+                            className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-8 text-center hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                            onDrop={handleDrop}
+                            onDragOver={handleDragOver}
+                        >
+                            <Upload className="mx-auto h-14 w-14 text-gray-400 dark:text-gray-500 mb-3" />
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
                                 Drag & drop or click to upload
                             </p>
                             <Input
@@ -1755,91 +2085,112 @@ function ImageUploadModal({
                                 variant="outline"
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={uploading}
+                                className="border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
                             >
-                                {uploading ? "Uploading..." : "Select Image"}
+                                {uploading ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Uploading to Cloudinary...
+                                    </>
+                                ) : "Select Image"}
                             </Button>
-                            <p className="text-xs text-muted-foreground mt-2">
-                                Supported formats: JPG, PNG, GIF, WebP
+                            <p className="text-xs text-gray-500 dark:text-gray-500 mt-3">
+                                Images will be uploaded to Cloudinary
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-500">
+                                Supported formats: JPG, PNG, GIF, WebP, SVG
                             </p>
                         </div>
                     </TabsContent>
 
-                    <TabsContent value="url" className="space-y-4">
+                    <TabsContent value="url" className="space-y-4 mt-4">
                         <div className="space-y-2">
-                            <Label htmlFor="image-url">Image URL</Label>
+                            <Label htmlFor="image-url" className="text-sm font-medium">Image URL</Label>
                             <Input
                                 id="image-url"
-                                placeholder="https://example.com/image.jpg"
+                                placeholder="https://res.cloudinary.com/... or any image URL"
                                 value={imageData.url}
                                 onChange={(e) => onImageDataChange({ ...imageData, url: e.target.value })}
+                                className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                             />
+                            <p className="text-xs text-gray-500 dark:text-gray-500">
+                                Enter a Cloudinary URL or any public image URL
+                            </p>
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="alt-text">Alt Text</Label>
+                            <Label htmlFor="alt-text" className="text-sm font-medium">Alt Text</Label>
                             <Input
                                 id="alt-text"
                                 placeholder="Description for accessibility"
                                 value={imageData.alt}
                                 onChange={(e) => onImageDataChange({ ...imageData, alt: e.target.value })}
+                                className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                             />
+                            <p className="text-xs text-gray-500 dark:text-gray-500">
+                                Important for screen readers and SEO
+                            </p>
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="title-text">Title (Optional)</Label>
+                            <Label htmlFor="title-text" className="text-sm font-medium">Title (Optional)</Label>
                             <Input
                                 id="title-text"
                                 placeholder="Image title"
                                 value={imageData.title}
                                 onChange={(e) => onImageDataChange({ ...imageData, title: e.target.value })}
+                                className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                             />
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label htmlFor="image-width">Width</Label>
+                                <Label htmlFor="image-width" className="text-sm font-medium">Width</Label>
                                 <div className="flex gap-2">
                                     <Input
                                         id="image-width"
                                         placeholder="e.g., 300px or 50%"
                                         value={imageData.width}
                                         onChange={(e) => onImageDataChange({ ...imageData, width: e.target.value })}
+                                        className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                                     />
                                 </div>
                             </div>
 
                             <div className="space-y-2">
-                                <Label htmlFor="image-height">Height</Label>
+                                <Label htmlFor="image-height" className="text-sm font-medium">Height</Label>
                                 <div className="flex gap-2">
                                     <Input
                                         id="image-height"
                                         placeholder="e.g., 200px or auto"
                                         value={imageData.height}
                                         onChange={(e) => onImageDataChange({ ...imageData, height: e.target.value })}
+                                        className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                                     />
                                 </div>
                             </div>
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="image-align">Alignment</Label>
+                            <Label htmlFor="image-align" className="text-sm font-medium">Alignment</Label>
                             <Select
                                 value={imageData.align}
                                 onValueChange={(value) => onImageDataChange({ ...imageData, align: value })}
                             >
-                                <SelectTrigger>
+                                <SelectTrigger className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800">
                                     <SelectValue placeholder="Alignment" />
                                 </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="left">Left</SelectItem>
-                                    <SelectItem value="center">Center</SelectItem>
-                                    <SelectItem value="right">Right</SelectItem>
+                                <SelectContent className="bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+                                    <SelectItem value="left" className="hover:bg-gray-100 dark:hover:bg-gray-700">Left</SelectItem>
+                                    <SelectItem value="center" className="hover:bg-gray-100 dark:hover:bg-gray-700">Center</SelectItem>
+                                    <SelectItem value="right" className="hover:bg-gray-100 dark:hover:bg-gray-700">Right</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
 
                         {imageData.url && (
-                            <div className="mt-4 p-2 border rounded">
+                            <div className="mt-4 p-3 border border-gray-200 dark:border-gray-700 rounded-lg">
+                                <div className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Preview:</div>
                                 <img
                                     src={imageData.url}
                                     alt="Preview"
@@ -1851,30 +2202,32 @@ function ImageUploadModal({
                                     }}
                                     onError={(e) => {
                                         e.target.style.display = 'none';
-                                        const errorDiv = e.target.nextElementSibling;
-                                        if (errorDiv) errorDiv.classList.remove('hidden');
+                                        const errorDiv = document.createElement('div');
+                                        errorDiv.className = 'text-sm text-red-600 text-center mt-2';
+                                        errorDiv.textContent = 'Failed to load image preview';
+                                        e.target.parentNode.appendChild(errorDiv);
                                     }}
                                 />
-                                <div className="hidden text-sm text-destructive text-center mt-2">
-                                    Failed to load image preview
-                                </div>
                             </div>
                         )}
                     </TabsContent>
                 </Tabs>
 
-                <DialogFooter className="gap-2 sm:gap-0">
+                <DialogFooter className="gap-2 sm:gap-0 mt-4">
                     <Button
                         type="button"
                         variant="outline"
                         onClick={onClose}
+                        disabled={uploading}
+                        className="border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
                     >
                         Cancel
                     </Button>
                     <Button
                         type="button"
                         onClick={onInsert}
-                        disabled={!imageData.url}
+                        disabled={!imageData.url || uploading}
+                        className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 text-white"
                     >
                         Insert Image
                     </Button>
@@ -1900,7 +2253,6 @@ function ImageSettingsModal({
 }) {
     if (!show || !selectedImageNode) return null;
 
-    // Parse size for preview - show text representation only
     const getSizeText = (size) => {
         if (size === 'auto') return 'auto';
         if (size.includes('%')) return size;
@@ -1910,25 +2262,24 @@ function ImageSettingsModal({
 
     return (
         <Dialog open={show} onOpenChange={onClose} className="max-h-[50vh] overflow-y-auto">
-            <DialogContent className="sm:max-w-md">
+            <DialogContent className="sm:max-w-md bg-white dark:bg-gray-900">
                 <DialogHeader>
-                    <DialogTitle>Image Settings</DialogTitle>
-                    <DialogDescription>
+                    <DialogTitle className="text-lg font-semibold">Image Settings</DialogTitle>
+                    <DialogDescription className="text-gray-600 dark:text-gray-400">
                         Adjust the properties of the selected image
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-4">
-                    {/* Alignment Controls */}
                     <div>
-                        <Label>Alignment</Label>
+                        <Label className="text-sm font-medium">Alignment</Label>
                         <div className="flex gap-2 mt-2">
                             <Button
                                 type="button"
                                 variant={imageData.align === 'left' ? 'default' : 'outline'}
                                 size="sm"
                                 onClick={() => onImageDataChange({ align: 'left' })}
-                                className="flex-1"
+                                className="flex-1 border-gray-300 dark:border-gray-600"
                             >
                                 <AlignLeft size={16} className="mr-2" />
                                 Left
@@ -1938,7 +2289,7 @@ function ImageSettingsModal({
                                 variant={imageData.align === 'center' ? 'default' : 'outline'}
                                 size="sm"
                                 onClick={() => onImageDataChange({ align: 'center' })}
-                                className="flex-1"
+                                className="flex-1 border-gray-300 dark:border-gray-600"
                             >
                                 <AlignCenter size={16} className="mr-2" />
                                 Center
@@ -1948,7 +2299,7 @@ function ImageSettingsModal({
                                 variant={imageData.align === 'right' ? 'default' : 'outline'}
                                 size="sm"
                                 onClick={() => onImageDataChange({ align: 'right' })}
-                                className="flex-1"
+                                className="flex-1 border-gray-300 dark:border-gray-600"
                             >
                                 <AlignRight size={16} className="mr-2" />
                                 Right
@@ -1956,9 +2307,8 @@ function ImageSettingsModal({
                         </div>
                     </div>
 
-                    {/* Quick Size Controls */}
                     <div>
-                        <Label>Quick Sizes</Label>
+                        <Label className="text-sm font-medium">Quick Sizes</Label>
                         <div className="grid grid-cols-4 gap-2 mt-2">
                             {QUICK_SIZES.slice(0, 4).map((size) => (
                                 <Button
@@ -1967,7 +2317,7 @@ function ImageSettingsModal({
                                     variant="outline"
                                     size="sm"
                                     onClick={() => onImageDataChange({ width: size.width, height: size.height })}
-                                    className={`${imageData.width === size.width && imageData.height === size.height ? 'bg-primary/20 border-primary' : ''}`}
+                                    className={`border-gray-300 dark:border-gray-600 ${imageData.width === size.width && imageData.height === size.height ? 'bg-blue-100 dark:bg-blue-900 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400' : ''}`}
                                 >
                                     {size.label}
                                 </Button>
@@ -1981,7 +2331,7 @@ function ImageSettingsModal({
                                     variant="outline"
                                     size="sm"
                                     onClick={() => onImageDataChange({ width: size.width, height: size.height })}
-                                    className={`${imageData.width === size.width && imageData.height === size.height ? 'bg-primary/20 border-primary' : ''}`}
+                                    className={`border-gray-300 dark:border-gray-600 ${imageData.width === size.width && imageData.height === size.height ? 'bg-blue-100 dark:bg-blue-900 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400' : ''}`}
                                 >
                                     {size.label}
                                 </Button>
@@ -1989,43 +2339,43 @@ function ImageSettingsModal({
                         </div>
                     </div>
 
-                    {/* Custom Size Controls */}
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                            <Label htmlFor="custom-width">Width</Label>
+                            <Label htmlFor="custom-width" className="text-sm font-medium">Width</Label>
                             <div className="flex gap-2">
                                 <Input
                                     id="custom-width"
                                     placeholder="e.g., 300px or 50%"
                                     value={imageData.width}
                                     onChange={(e) => onImageDataChange({ width: e.target.value })}
+                                    className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                                 />
                             </div>
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="custom-height">Height</Label>
+                            <Label htmlFor="custom-height" className="text-sm font-medium">Height</Label>
                             <div className="flex gap-2">
                                 <Input
                                     id="custom-height"
                                     placeholder="e.g., 200px or auto"
                                     value={imageData.height}
                                     onChange={(e) => onImageDataChange({ height: e.target.value })}
+                                    className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                                 />
                             </div>
                         </div>
                     </div>
 
-                    {/* Quick Actions */}
                     <div>
-                        <Label>Quick Actions</Label>
+                        <Label className="text-sm font-medium">Quick Actions</Label>
                         <div className="grid grid-cols-2 gap-2 mt-2">
                             <Button
                                 type="button"
                                 variant="outline"
                                 size="sm"
                                 onClick={onResetImageSize}
-                                className="flex-1"
+                                className="flex-1 border-gray-300 dark:border-gray-600"
                             >
                                 <RotateCw size={16} className="mr-2" />
                                 Reset All
@@ -2035,7 +2385,7 @@ function ImageSettingsModal({
                                 variant="outline"
                                 size="sm"
                                 onClick={() => onImageDataChange({ width: "100%", height: "auto", maxHeight: "none" })}
-                                className="flex-1"
+                                className="flex-1 border-gray-300 dark:border-gray-600"
                             >
                                 <Maximize size={16} className="mr-2" />
                                 Full Width
@@ -2043,17 +2393,16 @@ function ImageSettingsModal({
                         </div>
                     </div>
 
-                    {/* Preview */}
-                    <div className="p-4 border rounded-lg">
-                        <div className="text-sm font-medium mb-2">Preview</div>
-                        <div className="text-xs text-muted-foreground mb-2">
+                    <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800">
+                        <div className="text-sm font-medium mb-2 text-gray-700 dark:text-gray-300">Preview</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-500 mb-2">
                             Image will appear as: {getSizeText(imageData.width)} × {getSizeText(imageData.height)}
                             {(imageData.maxHeight && imageData.maxHeight !== 'none') && ` (max height: ${imageData.maxHeight})`}
                         </div>
-                        <div className="border rounded p-4 bg-gray-50 min-h-[120px] flex items-center justify-center">
+                        <div className="border border-gray-300 dark:border-gray-600 rounded p-4 bg-white dark:bg-gray-900 min-h-[120px] flex items-center justify-center">
                             <div className={`inline-block ${imageData.align === 'left' ? 'float-left mr-4' : imageData.align === 'right' ? 'float-right ml-4' : 'mx-auto'}`}>
                                 <div
-                                    className="bg-primary/20 rounded border-2 border-dashed border-primary/30 flex items-center justify-center overflow-hidden"
+                                    className="bg-blue-100 dark:bg-blue-900/30 rounded border-2 border-dashed border-blue-300 dark:border-blue-700 flex items-center justify-center overflow-hidden"
                                     style={{
                                         width: '200px',
                                         height: '150px',
@@ -2061,7 +2410,7 @@ function ImageSettingsModal({
                                         maxWidth: '100%'
                                     }}
                                 >
-                                    <div className="text-xs text-primary/60 text-center p-2">
+                                    <div className="text-xs text-blue-600 dark:text-blue-400 text-center p-2">
                                         <div>Image Preview</div>
                                         <div className="text-[10px] mt-1">
                                             {getSizeText(imageData.width)} × {getSizeText(imageData.height)}
@@ -2078,17 +2427,19 @@ function ImageSettingsModal({
                     </div>
                 </div>
 
-                <DialogFooter className="gap-2 sm:gap-0">
+                <DialogFooter className="gap-2 sm:gap-0 mt-4">
                     <Button
                         type="button"
                         variant="outline"
                         onClick={onClose}
+                        className="border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
                     >
                         Cancel
                     </Button>
                     <Button
                         type="button"
                         onClick={onClose}
+                        className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 text-white"
                     >
                         Apply Changes
                     </Button>
@@ -2104,46 +2455,48 @@ function LinkModal({ show, onClose, link, onLinkChange, onInsert, editor }) {
 
     return (
         <Dialog open={show} onOpenChange={onClose}>
-            <DialogContent className="sm:max-w-md">
+            <DialogContent className="sm:max-w-md bg-white dark:bg-gray-900">
                 <DialogHeader>
-                    <DialogTitle>Insert Link</DialogTitle>
-                    <DialogDescription>
+                    <DialogTitle className="text-lg font-semibold">Insert Link</DialogTitle>
+                    <DialogDescription className="text-gray-600 dark:text-gray-400">
                         Add a link to your content
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-4">
                     <div className="space-y-2">
-                        <Label htmlFor="link-text">Link Text</Label>
+                        <Label htmlFor="link-text" className="text-sm font-medium">Link Text</Label>
                         <Input
                             id="link-text"
                             placeholder="Click here"
                             value={link.text}
                             onChange={(e) => onLinkChange({ ...link, text: e.target.value })}
+                            className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                         />
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-gray-500 dark:text-gray-500">
                             Text that will be displayed as the link
                         </p>
                     </div>
 
                     <div className="space-y-2">
-                        <Label htmlFor="link-url">URL</Label>
+                        <Label htmlFor="link-url" className="text-sm font-medium">URL</Label>
                         <Input
                             id="link-url"
                             placeholder="https://example.com"
                             value={link.url}
                             onChange={(e) => onLinkChange({ ...link, url: e.target.value })}
+                            className="border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                         />
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-gray-500 dark:text-gray-500">
                             The web address the link will point to
                         </p>
                     </div>
 
                     <div className="space-y-2">
-                        <Label className="flex items-center gap-2">
+                        <Label className="flex items-center gap-2 text-sm font-medium">
                             <input
                                 type="checkbox"
-                                className="rounded"
+                                className="rounded border-gray-300 dark:border-gray-600"
                                 defaultChecked
                             />
                             Open in new tab
@@ -2151,11 +2504,12 @@ function LinkModal({ show, onClose, link, onLinkChange, onInsert, editor }) {
                     </div>
                 </div>
 
-                <DialogFooter className="gap-2 sm:gap-0">
+                <DialogFooter className="gap-2 sm:gap-0 mt-4">
                     <Button
                         type="button"
                         variant="outline"
                         onClick={onClose}
+                        className="border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
                     >
                         Cancel
                     </Button>
@@ -2163,6 +2517,7 @@ function LinkModal({ show, onClose, link, onLinkChange, onInsert, editor }) {
                         type="button"
                         onClick={onInsert}
                         disabled={!link.url}
+                        className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 text-white"
                     >
                         Insert Link
                     </Button>
@@ -2183,7 +2538,7 @@ function NavigationBar({
     isLast
 }) {
     return (
-        <div className="flex items-center justify-between p-3 border-t bg-muted/20">
+        <div className="flex items-center justify-between p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
             <div className="flex-1">
                 {previous && (
                     <Button
@@ -2191,18 +2546,18 @@ function NavigationBar({
                         variant="ghost"
                         onClick={onPrevious}
                         disabled={isFirst}
-                        className="gap-2"
+                        className="gap-2 hover:bg-gray-100 dark:hover:bg-gray-800"
                     >
                         <ArrowLeft size={16} />
                         <div className="text-left">
-                            <div className="text-xs text-muted-foreground">Previous</div>
-                            <div className="text-sm">{previous.title}</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Previous</div>
+                            <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{previous.title}</div>
                         </div>
                     </Button>
                 )}
             </div>
 
-            <div className="px-4 text-sm text-muted-foreground">
+            <div className="px-4 text-sm font-medium text-gray-700 dark:text-gray-300">
                 {current?.title || "Current Content"}
             </div>
 
@@ -2213,11 +2568,11 @@ function NavigationBar({
                         variant="ghost"
                         onClick={onNext}
                         disabled={isLast}
-                        className="gap-2"
+                        className="gap-2 hover:bg-gray-100 dark:hover:bg-gray-800"
                     >
                         <div className="text-right">
-                            <div className="text-xs text-muted-foreground">Next</div>
-                            <div className="text-sm">{next.title}</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Next</div>
+                            <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{next.title}</div>
                         </div>
                         <ArrowRight size={16} />
                     </Button>
