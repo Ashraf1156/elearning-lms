@@ -9,6 +9,7 @@ import AssessmentEditor from "./instructor/assessments/AssessmentEditor";
 import AssessmentResults from "./instructor/assessments/AssessmentResults";
 import PartnerInstructors from "./instructor/mentor-management/PartnerInstructor";
 import MentorDetails from "./instructor/mentor-management/MentorDetails";
+import StudentAssignmentOverview from "./instructor/mentor-management/StudentAssignmentOverview";
 // Add these imports
 
 export default function InstructorDashboard() {
@@ -31,6 +32,8 @@ export default function InstructorDashboard() {
             {/* Partner Instructor Management Routes */}
             <Route path="partner-instructors" element={<PartnerInstructors />} />
             <Route path="partner-instructors/:mentorId" element={<MentorDetails />} />
+
+            <Route path="partner-instructors/students" element={<StudentAssignmentOverview />} />
 
             <Route path="*" element={<Navigate to="analytics" replace />} />
         </Routes>

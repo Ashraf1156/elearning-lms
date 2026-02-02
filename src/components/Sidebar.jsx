@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { href, Link, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
     LayoutDashboard,
@@ -50,6 +50,7 @@ export function Sidebar({ collapsed, setCollapsed }) {
                 { href: "/instructor/announcements", label: "Announcements", icon: Megaphone },
                 { href: "/instructor/students", label: "Students", icon: Users },
                 { href: "/instructor/partner-instructors", label: "Partner Instructors", icon: UserCog },
+                { href: "/instructor/partner-instructors/students", label: "Partner Student Management", icon: ClipboardList },
                 { href: "/profile", label: "Profile", icon: Users },
             ],
         },

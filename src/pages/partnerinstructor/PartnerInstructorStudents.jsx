@@ -90,7 +90,6 @@ export default function PartnerInstructorStudents() {
     // Main fetch function
     const fetchData = async () => {
         try {
-            console.log("fetch DATA colled");
             setLoading(true);
             const [assignedCourses, assignedStudents] = await Promise.all([
                 fetchAssignedCourses(),
@@ -112,7 +111,11 @@ export default function PartnerInstructorStudents() {
 
         } catch (error) {
             console.error("Error fetching data:", error);
-            toast.error("Failed to load data");
+            toast({
+                title: "Error",
+                description: "Failed to load data",
+                variant: "destructive"
+            });
         } finally {
             setLoading(false);
         }
@@ -124,7 +127,8 @@ export default function PartnerInstructorStudents() {
             // 1. Get course assignments from mentorCourseAssignments
             const q = query(
                 collection(db, "mentorCourseAssignments"),
-                where("mentorId", "==", userData.uid)
+                where("mentorId", "==", userData.uid),
+                where("status", "==", "active")
             );
             const snap = await getDocs(q);
 
@@ -426,7 +430,11 @@ export default function PartnerInstructorStudents() {
     // Enroll student in course
     const handleEnrollStudent = async () => {
         if (!selectedCourseForEnrollment || !selectedStudentForEnrollment) {
-            toast.error("Please select a course");
+            toast({
+                title: "Error",
+                description: "Please select a course",
+                variant: "destructive"
+            });
             return;
         }
 
@@ -436,18 +444,36 @@ export default function PartnerInstructorStudents() {
             const studentId = selectedStudentForEnrollment.id;
             const courseId = selectedCourseForEnrollment;
 
+            // Check if the course is assigned to the partner instructor
+            const isCourseAssigned = courses.some(c => c.id === courseId);
+            if (!isCourseAssigned) {
+                toast({
+                    title: "Error",
+                    description: "You are not assigned to this course",
+                    variant: "destructive"
+                });
+                return;
+            }
+
             // Get course details
             const courseRef = doc(db, "courses", courseId);
             const courseSnap = await getDoc(courseRef);
 
             if (!courseSnap.exists()) {
-                toast.error("Course not found");
+                toast({
+                    title: "Error",
+                    description: "Course not found",
+                    variant: "destructive"
+                });
                 return;
             }
 
+            const courseData = courseSnap.data();
+
             // 1. Update user's enrolledCourses array
             await updateDoc(doc(db, "users", studentId), {
-                enrolledCourses: arrayUnion(courseId)
+                enrolledCourses: arrayUnion(courseId),
+                lastUpdated: serverTimestamp()
             });
 
             // 2. Create enrollment document in subcollection
@@ -455,8 +481,10 @@ export default function PartnerInstructorStudents() {
             await setDoc(enrollmentRef, {
                 enrolledAt: serverTimestamp(),
                 enrolledBy: userData.uid,
+                mentorId: userData.uid,
+                courseId: courseId,
                 status: "active",
-                mentorId: userData.uid
+                lastUpdated: serverTimestamp()
             });
 
             // 3. Create initial progress document
@@ -465,8 +493,10 @@ export default function PartnerInstructorStudents() {
                 enrolledAt: serverTimestamp(),
                 lastAccessed: serverTimestamp(),
                 completedModules: [],
-                totalModules: courseSnap.data().modules?.length || courseSnap.data().totalModules || 0,
-                progressPercentage: 0
+                totalModules: courseData.modules?.length || courseData.totalModules || 0,
+                progressPercentage: 0,
+                mentorId: userData.uid,
+                lastUpdated: serverTimestamp()
             });
 
             // 4. Update local state
@@ -474,8 +504,8 @@ export default function PartnerInstructorStudents() {
                 if (s.id === studentId) {
                     const newCourse = {
                         id: courseId,
-                        ...courseSnap.data(),
-                        totalModules: courseSnap.data().modules?.length || courseSnap.data().totalModules || 0
+                        ...courseData,
+                        totalModules: courseData.modules?.length || courseData.totalModules || 0
                     };
 
                     return {
@@ -488,7 +518,8 @@ export default function PartnerInstructorStudents() {
                                 completedModules: [],
                                 progressPercentage: 0,
                                 completedCount: 0,
-                                totalModules: newCourse.totalModules
+                                totalModules: newCourse.totalModules,
+                                lastUpdated: serverTimestamp()
                             }
                         }
                     };
@@ -504,8 +535,8 @@ export default function PartnerInstructorStudents() {
                     ...prev,
                     enrolledCourses: [...(prev.enrolledCourses || []), {
                         id: courseId,
-                        ...courseSnap.data(),
-                        totalModules: courseSnap.data().modules?.length || courseSnap.data().totalModules || 0
+                        ...courseData,
+                        totalModules: courseData.modules?.length || courseData.totalModules || 0
                     }],
                     enrollmentCount: (prev.enrollmentCount || 0) + 1
                 }));
@@ -521,14 +552,31 @@ export default function PartnerInstructorStudents() {
                 activeAssigned: activeCount
             }));
 
-            toast.success(`Successfully enrolled ${selectedStudentForEnrollment.fullName || selectedStudentForEnrollment.email} in the course`);
+            toast({
+                title: "Success",
+                description: `Successfully enrolled ${selectedStudentForEnrollment.fullName || selectedStudentForEnrollment.email} in the course`,
+                variant: "default"
+            });
+
             setEnrollmentDialogOpen(false);
             setSelectedCourseForEnrollment("");
             setSelectedStudentForEnrollment(null);
 
         } catch (error) {
             console.error("Error enrolling student:", error);
-            toast.error("Failed to enroll student");
+
+            let errorMessage = "Failed to enroll student";
+            if (error.code === 'permission-denied') {
+                errorMessage = "Permission denied. You don't have access to enroll students in this course.";
+            } else if (error.code === 'failed-precondition') {
+                errorMessage = "Course is not available for enrollment.";
+            }
+
+            toast({
+                title: "Error",
+                description: errorMessage,
+                variant: "destructive"
+            });
         } finally {
             setEnrolling(false);
         }
@@ -560,10 +608,18 @@ export default function PartnerInstructorStudents() {
             }
 
             setOpenMenuId(null);
-            toast.success("Student banned from course");
+            toast({
+                title: "Success",
+                description: "Student banned from course",
+                variant: "default"
+            });
         } catch (error) {
             console.error("Error banning student:", error);
-            toast.error("Failed to ban student");
+            toast({
+                title: "Error",
+                description: "Failed to ban student",
+                variant: "destructive"
+            });
         }
     };
 
@@ -592,10 +648,18 @@ export default function PartnerInstructorStudents() {
             }
 
             setOpenMenuId(null);
-            toast.success("Student unbanned from course");
+            toast({
+                title: "Success",
+                description: "Student unbanned from course",
+                variant: "default"
+            });
         } catch (error) {
             console.error("Error unbanning student:", error);
-            toast.error("Failed to unban student");
+            toast({
+                title: "Error",
+                description: "Failed to unban student",
+                variant: "destructive"
+            });
         }
     };
 
